@@ -189,7 +189,14 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			{
 				u32 ForegroundProcessId = 0;
 				GetWindowThreadProcessId(ForegroundWindow, &ForegroundProcessId);
-				if (ForegroundProcessId != 0 && ForegroundProcessId != GetCurrentProcessId())
+				// Only re-evaluate when the foreground process actually changes, since this
+				// loop runs every ~5ms and the Game Bar check below takes a process snapshot.
+				// Skip our own process and the Xbox Game Bar overlay (Win+G), so we don't
+				// end up auto-pausing Game Bar instead of the game underneath it.
+				if (ForegroundProcessId != 0 &&
+					ForegroundProcessId != GetCurrentProcessId() &&
+					ForegroundProcessId != gLastForegroundProcessId &&
+					!IsGameBarProcessId(ForegroundProcessId))
 				{
 					gLastForegroundProcessId = ForegroundProcessId;
 				}
@@ -292,6 +299,60 @@ u32 FindProcessIdByName(const wchar_t* ProcessName)
 
 	CloseHandle(ProcessSnapshot);
 	return(ProcessId);
+}
+
+// Returns TRUE if the given PID belongs to a known Xbox Game Bar / overlay process.
+// These processes can momentarily become the foreground window (e.g. when the user
+// opens the Game Bar overlay with Win+G), and we don't want to accidentally record
+// them as the "game" to auto-pause on sleep, nor suspend Game Bar itself.
+BOOL IsGameBarProcessId(u32 ProcessId)
+{
+	// Known Xbox Game Bar related executable names.
+	static const wchar_t* GameBarProcessNames[] =
+	{
+		L"GameBar.exe",
+		L"GameBarFTServer.exe",
+		L"GameBarElevatedFT_Alias.exe",
+		L"GameBarPresenceWriter.exe",
+		L"XboxGameBarWidgets.exe"
+	};
+
+	HANDLE ProcessSnapshot = NULL;
+	PROCESSENTRY32W ProcessEntry = { sizeof(PROCESSENTRY32W) };
+	BOOL IsGameBar = FALSE;
+
+	if (ProcessId == 0)
+	{
+		return(FALSE);
+	}
+
+	ProcessSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (ProcessSnapshot == INVALID_HANDLE_VALUE)
+	{
+		return(FALSE);
+	}
+
+	if (Process32FirstW(ProcessSnapshot, &ProcessEntry))
+	{
+		do
+		{
+			if (ProcessEntry.th32ProcessID == ProcessId)
+			{
+				for (size_t i = 0; i < _countof(GameBarProcessNames); i++)
+				{
+					if (_wcsicmp(ProcessEntry.szExeFile, GameBarProcessNames[i]) == 0)
+					{
+						IsGameBar = TRUE;
+						break;
+					}
+				}
+				break;
+			}
+		} while (Process32NextW(ProcessSnapshot, &ProcessEntry));
+	}
+
+	CloseHandle(ProcessSnapshot);
+	return(IsGameBar);
 }
 
 // Suspends all threads of the given process and records it as the currently paused process.
