@@ -47,6 +47,7 @@ LRESULT CALLBACK SysTrayCallback(_In_ HWND Window, _In_ UINT Message, _In_ WPARA
 void HandlePauseKeyPress(void);
 void UnpausePreviouslyPausedProcess(void);
 u32 FindProcessIdByName(const wchar_t* ProcessName);
+BOOL IsGameBarProcessId(u32 ProcessId);
 void PauseProcessById(u32 ProcessId);
 void HandleSystemSuspend(void);
 void HandleSystemResume(void);
