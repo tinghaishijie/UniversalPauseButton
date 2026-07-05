@@ -2,7 +2,7 @@
 
 #pragma warning(disable:4820) // padding in structures
 
-#define VERSION L"1.1.5"
+#define VERSION L"1.1.6"
 #define APPNAME L"UniversalPauseButton"
 
 // The Lord's data types.
@@ -32,8 +32,11 @@ typedef struct _CONFIG
 	u32 Debug;
 	u32 TrayIcon;
 	u32 PauseKey;
+	u32 PauseKeyModifiers;
 	wchar_t ProcessNameToPause[128];
 	u32 WebPort;
+	u32 PauseOnSleep;
+	u32 ControllerPause;
 } CONFIG;
 
 // Function declarations.
@@ -43,3 +46,8 @@ void DbgPrint(const wchar_t* Message, ...);
 LRESULT CALLBACK SysTrayCallback(_In_ HWND Window, _In_ UINT Message, _In_ WPARAM WParam, _In_ LPARAM LParam);
 void HandlePauseKeyPress(void);
 void UnpausePreviouslyPausedProcess(void);
+u32 FindProcessIdByName(const wchar_t* ProcessName);
+void PauseProcessById(u32 ProcessId);
+void HandleSystemSuspend(void);
+void HandleSystemResume(void);
+BOOL PollGamepadForPauseCombo(void);
