@@ -16,9 +16,12 @@
 #include <Windows.h>
 #include <stdio.h>
 #include <TlHelp32.h>
+#include <Xinput.h>
 #include "Main.h"
 #include "resource.h"
 #include "Server.h"
+
+#pragma comment(lib, "Xinput9_1_0.lib")
 
 CONFIG gConfig;
 HANDLE gDbgConsole = INVALID_HANDLE_VALUE;
@@ -27,6 +30,8 @@ HANDLE gMutex;
 NOTIFYICONDATA gTrayNotifyIconData;
 BOOL gIsPaused;
 u32 gPreviouslyPausedProcessId;
+u32 gLastForegroundProcessId;
+BOOL gPausedBySleep;
 
 
 int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _In_ PWSTR CmdLine, _In_ int CmdShow)
@@ -75,7 +80,11 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 	// The Windows system tray API obviously won't work if there is no Windows system tray. I don't know if the user's
 	// shell even has a taskbar so I'm skipping that too.
 
-	if (gConfig.TrayIcon)
+	// A hidden top-level window is required to receive WM_POWERBROADCAST (sleep/wake)
+	// notifications. So we create the window if EITHER the tray icon OR the
+	// PauseOnSleep feature is enabled. The system tray icon itself is only added
+	// when TrayIcon is enabled.
+	if (gConfig.TrayIcon || gConfig.PauseOnSleep)
 	{
 		WNDCLASSW WndClass = { 0 };
 		HWND HWnd = NULL;
@@ -110,34 +119,37 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			goto Exit;
 		}
 
-		gTrayNotifyIconData.cbSize = sizeof(NOTIFYICONDATA);
-		gTrayNotifyIconData.hWnd = HWnd;	
-		gTrayNotifyIconData.uID = 1982;
-		gTrayNotifyIconData.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-		gTrayNotifyIconData.uCallbackMessage = WM_TRAYICON;
-		wcscpy_s(gTrayNotifyIconData.szTip, _countof(gTrayNotifyIconData.szTip), APPNAME L" v" VERSION);
-		gTrayNotifyIconData.hIcon = (HICON)LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDI_ICON1), IMAGE_ICON, 0, 0, 0);
-
-		if (gTrayNotifyIconData.hIcon == NULL)
+		if (gConfig.TrayIcon)
 		{
-			MsgBox(L"Failed to load systray icon resource!", APPNAME L" Error", MB_OK | MB_ICONERROR);
-			goto Exit;
-		}
+			gTrayNotifyIconData.cbSize = sizeof(NOTIFYICONDATA);
+			gTrayNotifyIconData.hWnd = HWnd;	
+			gTrayNotifyIconData.uID = 1982;
+			gTrayNotifyIconData.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+			gTrayNotifyIconData.uCallbackMessage = WM_TRAYICON;
+			wcscpy_s(gTrayNotifyIconData.szTip, _countof(gTrayNotifyIconData.szTip), APPNAME L" v" VERSION);
+			gTrayNotifyIconData.hIcon = (HICON)LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDI_ICON1), IMAGE_ICON, 0, 0, 0);
 
-		if (Shell_NotifyIconW(NIM_ADD, &gTrayNotifyIconData) == FALSE)
-		{
-			MsgBox(L"Failed to register systray icon!", APPNAME L" Error", MB_OK | MB_ICONERROR);
-			goto Exit;
+			if (gTrayNotifyIconData.hIcon == NULL)
+			{
+				MsgBox(L"Failed to load systray icon resource!", APPNAME L" Error", MB_OK | MB_ICONERROR);
+				goto Exit;
+			}
+
+			if (Shell_NotifyIconW(NIM_ADD, &gTrayNotifyIconData) == FALSE)
+			{
+				MsgBox(L"Failed to register systray icon!", APPNAME L" Error", MB_OK | MB_ICONERROR);
+				goto Exit;
+			}
 		}
 	}
 
-	if (RegisterHotKey(NULL, 1, MOD_NOREPEAT, gConfig.PauseKey) == 0)
+	if (RegisterHotKey(NULL, 1, MOD_NOREPEAT | gConfig.PauseKeyModifiers, gConfig.PauseKey) == 0)
 	{
 		MsgBox(L"Failed to register hotkey! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
 		goto Exit;
 	}
 
-	DbgPrint(L"Registered hotkey 0x%x.", gConfig.PauseKey);
+	DbgPrint(L"Registered hotkey 0x%x with modifiers 0x%x.", gConfig.PauseKey, gConfig.PauseKeyModifiers);
 
 	runningServer = (gConfig.WebPort != 0);
 
@@ -167,8 +179,31 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			DispatchMessageW(&WndMsg);
 		}
 
+		// Continuously remember the last "real" foreground process (excluding our own),
+		// so that if the system sleeps we know which game process to auto-pause even if
+		// the foreground window has already changed to the lock screen / LogonUI.
+		if (gConfig.PauseOnSleep && !gIsPaused)
+		{
+			HWND ForegroundWindow = GetForegroundWindow();
+			if (ForegroundWindow != NULL)
+			{
+				u32 ForegroundProcessId = 0;
+				GetWindowThreadProcessId(ForegroundWindow, &ForegroundProcessId);
+				if (ForegroundProcessId != 0 && ForegroundProcessId != GetCurrentProcessId())
+				{
+					gLastForegroundProcessId = ForegroundProcessId;
+				}
+			}
+		}
+
 		if (runningServer && serve_request(gIsPaused))
 			HandlePauseKeyPress();
+
+		// Poll the Xbox controller(s) for the pause combo (Back + Start + LT + RT).
+		if (gConfig.ControllerPause && PollGamepadForPauseCombo())
+		{
+			HandlePauseKeyPress();
+		}
 
 		Sleep(5);
 	}
@@ -182,109 +217,193 @@ Exit:
 
 void HandlePauseKeyPress(void)
 {
-	HANDLE ProcessHandle = NULL;
-	HANDLE ProcessSnapshot = NULL;
-	PROCESSENTRY32W ProcessEntry = { sizeof(PROCESSENTRY32W) };
 	u32 ProcessId = 0;
-	
-	// Either we configured it to pause/un-pause a specified process, or we will pause/un-pause
+
+	// Toggle: if something is currently paused, un-pause it.
+	if (gIsPaused)
+	{
+		UnpausePreviouslyPausedProcess();
+		return;
+	}
+
+	// Either we configured it to pause a specified process, or we will pause
 	// the currently in-focus foreground window.
 	if (wcslen(gConfig.ProcessNameToPause) > 0)
 	{
-		if (gIsPaused)
+		DbgPrint(L"Pause key pressed. Attempting to pause named process %s...", gConfig.ProcessNameToPause);
+		ProcessId = FindProcessIdByName(gConfig.ProcessNameToPause);
+		if (ProcessId == 0)
 		{
-			// Process currently paused, need to un-pause it.
-			UnpausePreviouslyPausedProcess();
+			DbgPrint(L"Unable to locate any process with the name %s!", gConfig.ProcessNameToPause);
+			return;
 		}
-		else
-		{
-			// Process needs to be paused.
-			DbgPrint(L"Pause key pressed. Attempting to pause named process %s...", gConfig.ProcessNameToPause);
-			ProcessSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-			if (ProcessSnapshot == INVALID_HANDLE_VALUE)
-			{
-				MsgBox(L"Failed to create snapshot of running processes! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
-				goto Exit;
-			}
-
-			if (Process32FirstW(ProcessSnapshot, &ProcessEntry) == FALSE)
-			{
-				MsgBox(L"Failed to retrieve list of running processes! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
-				goto Exit;
-			}
-
-			do
-			{
-				if (_wcsicmp(ProcessEntry.szExeFile, gConfig.ProcessNameToPause) == 0)
-				{
-					ProcessId = ProcessEntry.th32ProcessID;
-					DbgPrint(L"Found process %s with PID %d.", ProcessEntry.szExeFile, ProcessId);
-					break;
-				}
-			} while (Process32NextW(ProcessSnapshot, &ProcessEntry));
-
-			if (ProcessId == 0)
-			{
-				DbgPrint(L"Unable to locate any process with the name %s!", gConfig.ProcessNameToPause);
-				goto Exit;
-			}
-			ProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, ProcessId);
-			if (ProcessHandle == NULL)
-			{
-				MsgBox(L"Failed to open process %d! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, ProcessId, GetLastError());
-				goto Exit;
-			}
-			NtSuspendProcess(ProcessHandle);
-			gIsPaused = TRUE;
-			gPreviouslyPausedProcessId = ProcessId;
-			DbgPrint(L"Process paused!");
-		}		
 	}
 	else
 	{
-		if (gIsPaused)
+		DbgPrint(L"Pause key pressed. Attempting to pause current foreground window...");
+		HWND ForegroundWindow = GetForegroundWindow();
+		if (ForegroundWindow == NULL)
 		{
-			// Process currently paused, need to un-pause it.
-			UnpausePreviouslyPausedProcess();
+			MsgBox(L"Failed to detect foreground window!", APPNAME L" Error", MB_OK | MB_ICONERROR);
+			return;
 		}
-		else
-		{			
-			// Process needs to be paused.
-			DbgPrint(L"Pause key pressed. Attempting to pause current foreground window...");
-			HWND ForegroundWindow = GetForegroundWindow();
-			if (ForegroundWindow == NULL)
-			{
-				MsgBox(L"Failed to detect foreground window!", APPNAME L" Error", MB_OK | MB_ICONERROR);
-				goto Exit;
-			}
-			GetWindowThreadProcessId(ForegroundWindow, &ProcessId);
-			if (ProcessId == 0)
-			{
-				MsgBox(L"Failed to get PID from foreground window! Error code 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
-				goto Exit;
-			}
-			ProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, ProcessId);
-			if (ProcessHandle == NULL)
-			{
-				MsgBox(L"Failed to open process %d! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, ProcessId, GetLastError());
-				goto Exit;
-			}
-			NtSuspendProcess(ProcessHandle);
-			gIsPaused = TRUE;
-			gPreviouslyPausedProcessId = ProcessId;
-			DbgPrint(L"Process paused!");
-		}		
+		GetWindowThreadProcessId(ForegroundWindow, &ProcessId);
+		if (ProcessId == 0)
+		{
+			MsgBox(L"Failed to get PID from foreground window! Error code 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
+			return;
+		}
 	}
 
-Exit:
-	if (ProcessSnapshot && ProcessSnapshot != INVALID_HANDLE_VALUE)
+	PauseProcessById(ProcessId);
+}
+
+// Searches the running processes for one matching the given executable name.
+// Returns the PID of the first match, or 0 if not found.
+u32 FindProcessIdByName(const wchar_t* ProcessName)
+{
+	HANDLE ProcessSnapshot = NULL;
+	PROCESSENTRY32W ProcessEntry = { sizeof(PROCESSENTRY32W) };
+	u32 ProcessId = 0;
+
+	ProcessSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (ProcessSnapshot == INVALID_HANDLE_VALUE)
 	{
+		MsgBox(L"Failed to create snapshot of running processes! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
+		return(0);
+	}
+
+	if (Process32FirstW(ProcessSnapshot, &ProcessEntry) == FALSE)
+	{
+		MsgBox(L"Failed to retrieve list of running processes! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
 		CloseHandle(ProcessSnapshot);
+		return(0);
 	}
-	if (ProcessHandle)
+
+	do
 	{
-		CloseHandle(ProcessHandle);
+		if (_wcsicmp(ProcessEntry.szExeFile, ProcessName) == 0)
+		{
+			ProcessId = ProcessEntry.th32ProcessID;
+			DbgPrint(L"Found process %s with PID %d.", ProcessEntry.szExeFile, ProcessId);
+			break;
+		}
+	} while (Process32NextW(ProcessSnapshot, &ProcessEntry));
+
+	CloseHandle(ProcessSnapshot);
+	return(ProcessId);
+}
+
+// Suspends all threads of the given process and records it as the currently paused process.
+void PauseProcessById(u32 ProcessId)
+{
+	HANDLE ProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, ProcessId);
+	if (ProcessHandle == NULL)
+	{
+		MsgBox(L"Failed to open process %d! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, ProcessId, GetLastError());
+		return;
 	}
+	NtSuspendProcess(ProcessHandle);
+	gIsPaused = TRUE;
+	gPreviouslyPausedProcessId = ProcessId;
+	CloseHandle(ProcessHandle);
+	DbgPrint(L"Process %d paused!", ProcessId);
+}
+
+// Called when the system is about to enter sleep/suspend. Automatically pauses the
+// game process so that it is frozen while the machine sleeps and can be resumed on wake.
+void HandleSystemSuspend(void)
+{
+	u32 ProcessId = 0;
+
+	if (gConfig.PauseOnSleep == FALSE)
+	{
+		return;
+	}
+
+	// If something is already paused (e.g. the user paused manually), leave it as-is
+	// and do not take ownership of the resume, so we don't accidentally un-pause on wake.
+	if (gIsPaused)
+	{
+		DbgPrint(L"System suspending, but a process is already paused. Leaving it untouched.");
+		return;
+	}
+
+	if (wcslen(gConfig.ProcessNameToPause) > 0)
+	{
+		DbgPrint(L"System suspending. Attempting to auto-pause named process %s...", gConfig.ProcessNameToPause);
+		ProcessId = FindProcessIdByName(gConfig.ProcessNameToPause);
+	}
+	else
+	{
+		DbgPrint(L"System suspending. Attempting to auto-pause last foreground process %d...", gLastForegroundProcessId);
+		ProcessId = gLastForegroundProcessId;
+	}
+
+	if (ProcessId == 0)
+	{
+		DbgPrint(L"No suitable process found to auto-pause on sleep.");
+		return;
+	}
+
+	PauseProcessById(ProcessId);
+	if (gIsPaused)
+	{
+		gPausedBySleep = TRUE;
+		DbgPrint(L"Auto-paused process %d due to system sleep.", ProcessId);
+	}
+}
+
+// Called when the system resumes from sleep. Automatically un-pauses the process that
+// we paused on sleep (but not one the user paused manually).
+void HandleSystemResume(void)
+{
+	if (gConfig.PauseOnSleep == FALSE)
+	{
+		return;
+	}
+
+	if (gIsPaused && gPausedBySleep)
+	{
+		DbgPrint(L"System resumed. Auto-un-pausing process %d.", gPreviouslyPausedProcessId);
+		UnpausePreviouslyPausedProcess();
+		gPausedBySleep = FALSE;
+	}
+}
+
+// Polls all connected Xbox controllers for the pause combo: Back + Start + LT + RT
+// held simultaneously. Uses edge detection so it fires only once per press (on the
+// transition from "not held" to "held"), not continuously while the buttons are down.
+// Returns TRUE exactly once each time the combo becomes newly pressed.
+BOOL PollGamepadForPauseCombo(void)
+{
+	static BOOL WasPressed = FALSE;
+	BOOL IsPressedNow = FALSE;
+
+	for (u32 i = 0; i < XUSER_MAX_COUNT; i++)
+	{
+		XINPUT_STATE State = { 0 };
+		if (XInputGetState(i, &State) == ERROR_SUCCESS)
+		{
+			WORD Buttons = State.Gamepad.wButtons;
+			BOOL BackAndStart = (Buttons & XINPUT_GAMEPAD_BACK) && (Buttons & XINPUT_GAMEPAD_START);
+			BOOL BothTriggers = (State.Gamepad.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD) &&
+			                    (State.Gamepad.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
+			if (BackAndStart && BothTriggers)
+			{
+				IsPressedNow = TRUE;
+				break;
+			}
+		}
+	}
+
+	BOOL JustPressed = (IsPressedNow && !WasPressed);
+	if (JustPressed)
+	{
+		DbgPrint(L"Controller pause combo (Back+Start+LT+RT) detected.");
+	}
+	WasPressed = IsPressedNow;
+	return(JustPressed);
 }
 
 void UnpausePreviouslyPausedProcess(void)
@@ -352,6 +471,14 @@ u32 LoadRegistrySettings(void)
 			.Destination = &gConfig.PauseKey
 		},
 		{
+			.Name = L"PauseKeyModifiers",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 0 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 0x000F },  // MOD_ALT|MOD_CONTROL|MOD_SHIFT|MOD_WIN
+			.Destination = &gConfig.PauseKeyModifiers
+		},
+		{
 			.Name = L"ProcessNameToPause",
 			.DataType = REG_SZ,
 			.DefaultValue = &(wchar_t[128]) { L"" },
@@ -366,6 +493,22 @@ u32 LoadRegistrySettings(void)
 			.MinValue = &(u32) { 0 },
 			.MaxValue = &(u32) { 65535 },
 			.Destination = &gConfig.WebPort
+		},
+		{
+			.Name = L"PauseOnSleep",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 1 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 1 },
+			.Destination = &gConfig.PauseOnSleep
+		},
+		{
+			.Name = L"ControllerPause",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 1 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 1 },
+			.Destination = &gConfig.ControllerPause
 		},
 	};
 
@@ -545,6 +688,31 @@ LRESULT CALLBACK SysTrayCallback(_In_ HWND Window, _In_ UINT Message, _In_ WPARA
 					QuitMessageBoxIsShowing = FALSE;
 				}
 			}
+			break;
+		}
+		case WM_POWERBROADCAST:
+		{
+			switch (WParam)
+			{
+				case PBT_APMSUSPEND:
+				{
+					// System is about to enter a low-power (sleep/suspend) state.
+					HandleSystemSuspend();
+					break;
+				}
+				case PBT_APMRESUMEAUTOMATIC:
+				case PBT_APMRESUMESUSPEND:
+				{
+					// System has resumed from a low-power state.
+					HandleSystemResume();
+					break;
+				}
+				default:
+				{
+					break;
+				}
+			}
+			Result = TRUE;
 			break;
 		}
 		default:

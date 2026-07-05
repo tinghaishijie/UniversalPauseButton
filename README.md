@@ -98,6 +98,19 @@ If WebPort is defined, then the app will open up a port for which another device
 	
 	Maximum: 0xFFFF
 
+**PauseOnSleep**
+
+    Type: DWORD
+	
+    Default: 1
+	
+	Minimum: 0
+	
+	Maximum: 1
+	
+
+If PauseOnSleep is enabled (which it is by default), the app will automatically pause the game when your PC goes to sleep (suspend), and automatically un-pause it when the PC wakes back up. This is handy so that your game is cleanly frozen while the machine sleeps and resumes exactly where you left off. If ProcessNameToPause is set, that named process is the one paused; otherwise the last foreground process seen before sleep is paused. Note: if you paused something manually before the PC slept, it is left untouched and will not be auto-un-paused on wake. This feature requires a window to receive power notifications, so the app will create a hidden window even if TrayIcon is disabled.
+
 As always, please try it out, and let me know if you find any bugs or have any feature requests.
 
 Thanks!
