@@ -111,6 +111,26 @@ If WebPort is defined, then the app will open up a port for which another device
 
 If PauseOnSleep is enabled (which it is by default), the app will automatically pause the game when your PC goes to sleep (suspend), and automatically un-pause it when the PC wakes back up. This is handy so that your game is cleanly frozen while the machine sleeps and resumes exactly where you left off. If ProcessNameToPause is set, that named process is the one paused; otherwise the last foreground process seen before sleep is paused. The Xbox Game Bar overlay (Win+G) is deliberately excluded from this foreground tracking, so opening Game Bar right before sleep won't cause the app to accidentally pause Game Bar instead of the game underneath it. Note: if you paused something manually before the PC slept, it is left untouched and will not be auto-un-paused on wake. This feature requires a window to receive power notifications, so the app will create a hidden window even if TrayIcon is disabled.
 
+**WidgetPause**
+
+    Type: DWORD
+
+    Default: 1
+
+	Minimum: 0
+
+	Maximum: 1
+
+If WidgetPause is enabled (the default), the app creates a named event (`Global\UniversalPauseButtonToggle`) that the Xbox Game Bar widget can signal to toggle pausing. See the "Xbox full-screen experience / Game Bar widget" section below. Set it to 0 to disable creating the event.
+
+## Xbox full-screen experience / Game Bar widget
+
+The controller pause combo (Back + Start + LT + RT) is detected by polling XInput in the background. This works on a normal desktop, but **stops working while the Xbox full-screen experience (Xbox Mode / FSE) or the Game Bar is in the foreground**: that shell takes exclusive control of the controller, so a background app like Universal Pause Button no longer receives any controller input. This is a Windows design limitation, not a bug — it also affects the keyboard, but the keyboard hotkey keeps working because it is a system-level global hotkey.
+
+To pause/resume while the Xbox full-screen experience is active, use the **Universal Pause Button Game Bar widget** in the `GameBarWidget` folder. It adds a single "Pause / Resume" button to the Xbox Game Bar. Because Game Bar widgets receive gamepad navigation even in FSE, you can open Game Bar (Xbox button / Win+G), focus the widget, and press A to toggle pausing. The widget signals the main app through the shared `Global\UniversalPauseButtonToggle` event, so the main Universal Pause Button app must be running.
+
+See `GameBarWidget/README.md` for how to build and sideload the widget.
+
 As always, please try it out, and let me know if you find any bugs or have any feature requests.
 
 Thanks!

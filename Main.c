@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <TlHelp32.h>
 #include <Xinput.h>
+#include <sddl.h>
+#include <shlobj.h>
 #include "Main.h"
 #include "resource.h"
 #include "Server.h"
@@ -32,6 +34,8 @@ BOOL gIsPaused;
 u32 gPreviouslyPausedProcessId;
 u32 gLastForegroundProcessId;
 BOOL gPausedBySleep;
+HANDLE gPauseSignalEvent = NULL;
+wchar_t gPausedProcessName[128];
 
 
 int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _In_ PWSTR CmdLine, _In_ int CmdShow)
@@ -166,6 +170,16 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 		openWelcomePageInBrowser(gConfig.WebPort);
 	}
 
+	// The Xbox full-screen experience / Game Bar takes exclusive control of the
+	// controller, so our background XInput polling stops seeing the pause combo while
+	// it is active. The Game Bar widget works around this by signaling us through a
+	// shared named event instead. Create that event so the widget can toggle pausing.
+	if (gConfig.WidgetPause)
+	{
+		gPauseSignalEvent = CreatePauseSignalEvent();
+		RegisterWidgetLaunchProtocol();
+		UpdateWidgetState();
+	}
 
 	while (gIsRunning)
 	{
@@ -212,10 +226,46 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			HandlePauseKeyPress();
 		}
 
+		// The Game Bar widget signals this event when its pause button is pressed.
+		// This keeps pause/un-pause working even in the Xbox full-screen experience,
+		// where XInput polling above no longer sees controller input.
+		if (gPauseSignalEvent != NULL && WaitForSingleObject(gPauseSignalEvent, 0) == WAIT_OBJECT_0)
+		{
+			DbgPrint(L"Pause signal received from Game Bar widget.");
+			HandlePauseKeyPress();
+		}
+
+		// Periodically republish the widget state file. This keeps it present even if the
+		// widget package is (re)installed while we run (which recreates its LocalState
+		// folder), so the widget button reflects that we're running instead of "Start".
+		if (gConfig.WidgetPause)
+		{
+			static u32 LastWidgetWriteTick = 0;
+			u32 NowTick = GetTickCount();
+			if (NowTick - LastWidgetWriteTick >= 1000)
+			{
+				LastWidgetWriteTick = NowTick;
+				UpdateWidgetState();
+			}
+		}
+
 		Sleep(5);
 	}
 
 Exit:
+	if (gConfig.WidgetPause)
+	{
+		// Remove the widget state file so the Game Bar widget correctly shows the
+		// "not running / Start" state once we've exited.
+		DeleteWidgetStateFile();
+	}
+
+	if (gPauseSignalEvent != NULL)
+	{
+		CloseHandle(gPauseSignalEvent);
+		gPauseSignalEvent = NULL;
+	}
+
 	if(runningServer)
 		serve_stop();
 
@@ -367,6 +417,8 @@ void PauseProcessById(u32 ProcessId)
 	NtSuspendProcess(ProcessHandle);
 	gIsPaused = TRUE;
 	gPreviouslyPausedProcessId = ProcessId;
+	GetProcessNameById(ProcessId, gPausedProcessName, _countof(gPausedProcessName));
+	UpdateWidgetState();
 	CloseHandle(ProcessHandle);
 	DbgPrint(L"Process %d paused!", ProcessId);
 }
@@ -467,6 +519,223 @@ BOOL PollGamepadForPauseCombo(void)
 	return(JustPressed);
 }
 
+// Creates the named event that lets the Xbox Game Bar widget toggle the pause state.
+// The widget runs inside a UWP AppContainer, so the event's security descriptor grants
+// EVENT_MODIFY_STATE | SYNCHRONIZE (0x100002) to ALL APPLICATION PACKAGES (AC) so the
+// sandboxed widget can open and set it; the interactive user (WD) gets the same rights.
+// A low mandatory-integrity label (S:(ML;;NW;;;LW)) is also applied so the low-integrity
+// AppContainer can obtain write (EVENT_MODIFY_STATE) access; the AC DACL ACE alone is not
+// sufficient under Mandatory Integrity Control. Returns the event handle, or NULL on failure.
+HANDLE CreatePauseSignalEvent(void)
+{
+	SECURITY_ATTRIBUTES SecurityAttributes = { 0 };
+	SecurityAttributes.nLength = sizeof(SecurityAttributes);
+	SecurityAttributes.bInheritHandle = FALSE;
+
+	if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
+			L"D:(A;;0x100002;;;WD)(A;;0x100002;;;AC)S:(ML;;NW;;;LW)",
+			SDDL_REVISION_1,
+			&SecurityAttributes.lpSecurityDescriptor,
+			NULL) == FALSE)
+	{
+		DbgPrint(L"Failed to build security descriptor for pause signal event! Error 0x%08lx", GetLastError());
+		return(NULL);
+	}
+
+	// Auto-reset, initially non-signaled: reading it with WaitForSingleObject(..., 0)
+	// consumes a single signal so each widget button press toggles pausing exactly once.
+	HANDLE Event = CreateEventW(&SecurityAttributes, FALSE, FALSE, PAUSE_SIGNAL_EVENT_NAME);
+	if (Event == NULL)
+	{
+		DbgPrint(L"Failed to create pause signal event! Error 0x%08lx", GetLastError());
+	}
+	else
+	{
+		DbgPrint(L"Created pause signal event '%s' for the Game Bar widget.", PAUSE_SIGNAL_EVENT_NAME);
+	}
+
+	LocalFree(SecurityAttributes.lpSecurityDescriptor);
+	return(Event);
+}
+
+// Registers a private URI scheme (universalpausebutton:) under HKCU\Software\Classes that
+// points at this executable, so the Game Bar widget can relaunch the app via
+// Launcher.LaunchUriAsync when it isn't running. Registering under HKCU needs no admin.
+void RegisterWidgetLaunchProtocol(void)
+{
+	wchar_t ExePath[MAX_PATH];
+	if (GetModuleFileNameW(NULL, ExePath, _countof(ExePath)) == 0)
+	{
+		DbgPrint(L"Failed to get module file name for protocol registration! Error 0x%08lx", GetLastError());
+		return;
+	}
+
+	wchar_t Command[MAX_PATH + 16];
+	if (swprintf_s(Command, _countof(Command), L"\"%s\" \"%%1\"", ExePath) < 0)
+	{
+		return;
+	}
+
+	HKEY Key = NULL;
+	// HKCU\Software\Classes\universalpausebutton
+	if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\" WIDGET_LAUNCH_PROTOCOL,
+			0, NULL, 0, KEY_WRITE, NULL, &Key, NULL) == ERROR_SUCCESS)
+	{
+		const wchar_t* Description = L"URL:" APPNAME L" Protocol";
+		RegSetValueExW(Key, NULL, 0, REG_SZ, (const BYTE*)Description,
+			(DWORD)((wcslen(Description) + 1) * sizeof(wchar_t)));
+		// The presence of "URL Protocol" marks this key as a URI scheme handler.
+		RegSetValueExW(Key, L"URL Protocol", 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
+		RegCloseKey(Key);
+	}
+
+	// HKCU\Software\Classes\universalpausebutton\shell\open\command
+	if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\" WIDGET_LAUNCH_PROTOCOL L"\\shell\\open\\command",
+			0, NULL, 0, KEY_WRITE, NULL, &Key, NULL) == ERROR_SUCCESS)
+	{
+		RegSetValueExW(Key, NULL, 0, REG_SZ, (const BYTE*)Command,
+			(DWORD)((wcslen(Command) + 1) * sizeof(wchar_t)));
+		RegCloseKey(Key);
+		DbgPrint(L"Registered '%s:' launch protocol -> %s", WIDGET_LAUNCH_PROTOCOL, ExePath);
+	}
+	else
+	{
+		DbgPrint(L"Failed to register launch protocol command key! Error 0x%08lx", GetLastError());
+	}
+}
+
+// Resolves the Game Bar widget package's LocalState folder (which has a publisher-hash
+// suffix on the package name) and writes the full path of the state file into PathOut.
+// Returns TRUE if the folder was found. The folder exists only once the widget package
+// has been installed for the current user.
+static BOOL GetWidgetStateFilePath(wchar_t* PathOut, size_t PathOutCount)
+{
+	wchar_t LocalAppData[MAX_PATH];
+	if (FAILED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, LocalAppData)))
+	{
+		return(FALSE);
+	}
+
+	wchar_t SearchPattern[MAX_PATH];
+	if (swprintf_s(SearchPattern, _countof(SearchPattern),
+			L"%s\\Packages\\%s*", LocalAppData, WIDGET_PACKAGE_NAME_PREFIX) < 0)
+	{
+		return(FALSE);
+	}
+
+	WIN32_FIND_DATAW FindData = { 0 };
+	HANDLE FindHandle = FindFirstFileW(SearchPattern, &FindData);
+	if (FindHandle == INVALID_HANDLE_VALUE)
+	{
+		return(FALSE);
+	}
+
+	BOOL Found = FALSE;
+	do
+	{
+		if (FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			if (swprintf_s(PathOut, PathOutCount, L"%s\\Packages\\%s\\LocalState\\%s",
+					LocalAppData, FindData.cFileName, WIDGET_STATE_FILE_NAME) >= 0)
+			{
+				Found = TRUE;
+			}
+			break;
+		}
+	} while (FindNextFileW(FindHandle, &FindData));
+
+	FindClose(FindHandle);
+	return(Found);
+}
+
+// Publishes the current pause state and paused process name so the Game Bar widget can
+// reflect them. Writes a tiny UTF-16 file into the widget package's LocalState folder:
+//   line 1: "0" (running) or "1" (paused)
+//   line 2: the paused process's executable name (empty when running)
+// The widget reads this via ApplicationData.Current.LocalFolder. Safe to call anytime;
+// silently does nothing if the widget package isn't installed.
+void UpdateWidgetState(void)
+{
+	if (gConfig.WidgetPause == FALSE)
+	{
+		return;
+	}
+
+	wchar_t FilePath[MAX_PATH];
+	if (GetWidgetStateFilePath(FilePath, _countof(FilePath)) == FALSE)
+	{
+		return;
+	}
+
+	wchar_t Contents[160];
+	int Length = swprintf_s(Contents, _countof(Contents), L"%d\n%s",
+		gIsPaused ? 1 : 0, gIsPaused ? gPausedProcessName : L"");
+	if (Length < 0)
+	{
+		return;
+	}
+
+	HANDLE File = CreateFileW(FilePath, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+		CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (File == INVALID_HANDLE_VALUE)
+	{
+		DbgPrint(L"Failed to write widget state file '%s'! Error 0x%08lx", FilePath, GetLastError());
+		return;
+	}
+
+	// Write a UTF-16 LE BOM followed by the text so the widget can read it as Unicode.
+	static const unsigned char Bom[2] = { 0xFF, 0xFE };
+	DWORD Written = 0;
+	WriteFile(File, Bom, sizeof(Bom), &Written, NULL);
+	WriteFile(File, Contents, (DWORD)(Length * sizeof(wchar_t)), &Written, NULL);
+	CloseHandle(File);
+}
+
+// Deletes the widget state file (best effort) so the Game Bar widget shows the
+// "not running / Start" state after the app exits.
+void DeleteWidgetStateFile(void)
+{
+	wchar_t FilePath[MAX_PATH];
+	if (GetWidgetStateFilePath(FilePath, _countof(FilePath)))
+	{
+		DeleteFileW(FilePath);
+	}
+}
+
+// Looks up the executable name (e.g. "game.exe") for the given PID and copies it into
+// Buffer. Buffer is set to an empty string if the process can't be found.
+void GetProcessNameById(u32 ProcessId, wchar_t* Buffer, size_t BufferCount)
+{
+	HANDLE ProcessSnapshot = NULL;
+	PROCESSENTRY32W ProcessEntry = { sizeof(PROCESSENTRY32W) };
+
+	if (Buffer == NULL || BufferCount == 0)
+	{
+		return;
+	}
+	Buffer[0] = L'\0';
+
+	ProcessSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (ProcessSnapshot == INVALID_HANDLE_VALUE)
+	{
+		return;
+	}
+
+	if (Process32FirstW(ProcessSnapshot, &ProcessEntry))
+	{
+		do
+		{
+			if (ProcessEntry.th32ProcessID == ProcessId)
+			{
+				wcsncpy_s(Buffer, BufferCount, ProcessEntry.szExeFile, _TRUNCATE);
+				break;
+			}
+		} while (Process32NextW(ProcessSnapshot, &ProcessEntry));
+	}
+
+	CloseHandle(ProcessSnapshot);
+}
+
 void UnpausePreviouslyPausedProcess(void)
 {	
 	HANDLE ProcessHandle = NULL;
@@ -485,6 +754,8 @@ void UnpausePreviouslyPausedProcess(void)
 	}	
 	gIsPaused = FALSE;
 	gPreviouslyPausedProcessId = 0;
+	gPausedProcessName[0] = L'\0';
+	UpdateWidgetState();
 	if (ProcessHandle)
 	{
 		CloseHandle(ProcessHandle);
@@ -570,6 +841,14 @@ u32 LoadRegistrySettings(void)
 			.MinValue = &(u32) { 0 },
 			.MaxValue = &(u32) { 1 },
 			.Destination = &gConfig.ControllerPause
+		},
+		{
+			.Name = L"WidgetPause",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 1 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 1 },
+			.Destination = &gConfig.WidgetPause
 		},
 	};
 
