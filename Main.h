@@ -5,6 +5,28 @@
 #define VERSION L"1.1.6"
 #define APPNAME L"UniversalPauseButton"
 
+// Name of the named event that the Xbox Game Bar widget sets to toggle the pause
+// state. It lives in the Global namespace so the widget's UWP AppContainer and this
+// desktop process can share it within the interactive session.
+#define PAUSE_SIGNAL_EVENT_NAME L"Global\\UniversalPauseButtonToggle"
+
+// The app publishes its current pause state (and paused process name) to a small file
+// inside the Game Bar widget's own AppData LocalState folder, which the sandboxed UWP
+// widget can read via ApplicationData.Current.LocalFolder without any capability. This
+// is used instead of shared memory because a non-elevated desktop process cannot create
+// a Global\ file-mapping section (that needs SeCreateGlobalPrivilege), whereas writing to
+// the widget package's LocalState folder works for the interactive user.
+// WIDGET_PACKAGE_NAME_PREFIX must match the <Identity Name="..."> in the widget's
+// Package.appxmanifest; the actual folder has a publisher hash suffix we resolve at
+// runtime. WIDGET_STATE_FILE_NAME must match the reader in MainWidget.xaml.cs.
+#define WIDGET_PACKAGE_NAME_PREFIX L"49ea3fb1-1591-434f-99ae-afec90b1a17c_"
+#define WIDGET_STATE_FILE_NAME L"state.dat"
+
+// Private URI scheme the app registers (pointing at its own exe) so the Game Bar widget
+// can start the app via Launcher.LaunchUriAsync when it isn't already running. Must match
+// the scheme used in the widget (MainWidget.xaml.cs).
+#define WIDGET_LAUNCH_PROTOCOL L"universalpausebutton"
+
 // The Lord's data types.
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -37,6 +59,7 @@ typedef struct _CONFIG
 	u32 WebPort;
 	u32 PauseOnSleep;
 	u32 ControllerPause;
+	u32 WidgetPause;
 } CONFIG;
 
 // Function declarations.
@@ -52,3 +75,8 @@ void PauseProcessById(u32 ProcessId);
 void HandleSystemSuspend(void);
 void HandleSystemResume(void);
 BOOL PollGamepadForPauseCombo(void);
+HANDLE CreatePauseSignalEvent(void);
+void RegisterWidgetLaunchProtocol(void);
+void UpdateWidgetState(void);
+void DeleteWidgetStateFile(void);
+void GetProcessNameById(u32 ProcessId, wchar_t* Buffer, size_t BufferCount);
