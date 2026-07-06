@@ -60,6 +60,7 @@ typedef struct _CONFIG
 	u32 PauseOnSleep;
 	u32 ControllerPause;
 	u32 WidgetPause;
+	u32 Autostart;
 } CONFIG;
 
 // Function declarations.
@@ -77,6 +78,7 @@ void HandleSystemResume(void);
 BOOL PollGamepadForPauseCombo(void);
 HANDLE CreatePauseSignalEvent(void);
 void RegisterWidgetLaunchProtocol(void);
+void UpdateAutostartRegistration(void);
 void UpdateWidgetState(void);
 void DeleteWidgetStateFile(void);
 void GetProcessNameById(u32 ProcessId, wchar_t* Buffer, size_t BufferCount);

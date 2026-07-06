@@ -123,6 +123,18 @@ If PauseOnSleep is enabled (which it is by default), the app will automatically 
 
 If WidgetPause is enabled (the default), the app creates a named event (`Global\UniversalPauseButtonToggle`) that the Xbox Game Bar widget can signal to toggle pausing. See the "Xbox full-screen experience / Game Bar widget" section below. Set it to 0 to disable creating the event.
 
+**Autostart**
+
+    Type: DWORD
+
+    Default: 0
+
+	Minimum: 0
+
+	Maximum: 1
+
+If Autostart is enabled, the app registers itself in the per-user startup key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) so it launches automatically every time you sign in to Windows. When set back to 0, the app removes that entry on next launch. The setting is applied every time the app starts, so the Run entry always points at the current location of the executable. Note: on the Xbox full-screen experience (Xbox Mode / FSE) handheld shell, classic logon autostart (Run keys, Startup folder, logon-triggered scheduled tasks) is deferred until you exit to the desktop; only the FSE's own "launch at sign in" list starts apps at actual FSE login.
+
 ## Xbox full-screen experience / Game Bar widget
 
 The controller pause combo (Back + Start + LT + RT) is detected by polling XInput in the background. This works on a normal desktop, but **stops working while the Xbox full-screen experience (Xbox Mode / FSE) or the Game Bar is in the foreground**: that shell takes exclusive control of the controller, so a background app like Universal Pause Button no longer receives any controller input. This is a Windows design limitation, not a bug — it also affects the keyboard, but the keyboard hotkey keeps working because it is a system-level global hotkey.

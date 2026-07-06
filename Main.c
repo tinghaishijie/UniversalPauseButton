@@ -181,6 +181,10 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 		UpdateWidgetState();
 	}
 
+	// Add or remove this app from the per-user startup (HKCU Run) key so it launches
+	// automatically when the user signs in, according to the Autostart registry setting.
+	UpdateAutostartRegistration();
+
 	while (gIsRunning)
 	{
 		while (PeekMessageW(&WndMsg, NULL, 0, 0, PM_REMOVE))
@@ -604,6 +608,67 @@ void RegisterWidgetLaunchProtocol(void)
 	}
 }
 
+// Registers or unregisters the app in the per-user "Run" key
+// (HKCU\Software\Microsoft\Windows\CurrentVersion\Run) so Windows starts it
+// automatically at sign-in. Controlled by the Autostart registry setting.
+// NOTE: On the Xbox full-screen experience (FSE) handheld shell, classic logon
+// autostart (Run keys, Startup folder, logon tasks) is deferred until you exit to
+// the desktop; only the FSE "launch at sign in" list starts apps at FSE login.
+void UpdateAutostartRegistration(void)
+{
+	HKEY Key = NULL;
+	if (RegOpenKeyExW(HKEY_CURRENT_USER,
+			L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+			0, KEY_WRITE, &Key) != ERROR_SUCCESS)
+	{
+		DbgPrint(L"Failed to open Run key for autostart! Error 0x%08lx", GetLastError());
+		return;
+	}
+
+	if (gConfig.Autostart)
+	{
+		wchar_t ExePath[MAX_PATH];
+		if (GetModuleFileNameW(NULL, ExePath, _countof(ExePath)) == 0)
+		{
+			DbgPrint(L"Failed to get module file name for autostart! Error 0x%08lx", GetLastError());
+			RegCloseKey(Key);
+			return;
+		}
+
+		// Quote the path in case it contains spaces.
+		wchar_t Command[MAX_PATH + 2];
+		if (swprintf_s(Command, _countof(Command), L"\"%s\"", ExePath) < 0)
+		{
+			RegCloseKey(Key);
+			return;
+		}
+
+		if (RegSetValueExW(Key, APPNAME, 0, REG_SZ, (const BYTE*)Command,
+				(DWORD)((wcslen(Command) + 1) * sizeof(wchar_t))) == ERROR_SUCCESS)
+		{
+			DbgPrint(L"Autostart enabled -> %s", Command);
+		}
+		else
+		{
+			DbgPrint(L"Failed to write autostart Run value! Error 0x%08lx", GetLastError());
+		}
+	}
+	else
+	{
+		LONG DeleteResult = RegDeleteValueW(Key, APPNAME);
+		if (DeleteResult == ERROR_SUCCESS)
+		{
+			DbgPrint(L"Autostart disabled; removed Run value.");
+		}
+		else if (DeleteResult != ERROR_FILE_NOT_FOUND)
+		{
+			DbgPrint(L"Failed to remove autostart Run value! Error 0x%08lx", DeleteResult);
+		}
+	}
+
+	RegCloseKey(Key);
+}
+
 // Resolves the Game Bar widget package's LocalState folder (which has a publisher-hash
 // suffix on the package name) and writes the full path of the state file into PathOut.
 // Returns TRUE if the folder was found. The folder exists only once the widget package
@@ -849,6 +914,14 @@ u32 LoadRegistrySettings(void)
 			.MinValue = &(u32) { 0 },
 			.MaxValue = &(u32) { 1 },
 			.Destination = &gConfig.WidgetPause
+		},
+		{
+			.Name = L"Autostart",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 0 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 1 },
+			.Destination = &gConfig.Autostart
 		},
 	};
 
