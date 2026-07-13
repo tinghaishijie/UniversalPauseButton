@@ -229,17 +229,19 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			HandlePauseKeyPress();
 		}
 
-		// Periodically republish the widget state file. This keeps it present even if the
-		// widget package is (re)installed while we run (which recreates its LocalState
-		// folder), so the widget button reflects that we're running instead of "Start".
+		// The widget state file lives in the widget package's LocalState folder, which
+		// only exists once the widget is installed. If the widget is installed (or
+		// reinstalled) after we start, republish the file so the widget shows we're
+		// running instead of "Start" — but only when it's actually missing, so we don't
+		// write to disk on every tick while idle.
 		if (gConfig.WidgetPause)
 		{
-			static u32 LastWidgetWriteTick = 0;
+			static u32 LastWidgetCheckTick = 0;
 			u32 NowTick = GetTickCount();
-			if (NowTick - LastWidgetWriteTick >= 1000)
+			if (NowTick - LastWidgetCheckTick >= 5000)
 			{
-				LastWidgetWriteTick = NowTick;
-				UpdateWidgetState();
+				LastWidgetCheckTick = NowTick;
+				RepublishWidgetStateIfMissing();
 			}
 		}
 
@@ -633,6 +635,16 @@ void UpdateAutostartRegistration(void)
 // has been installed for the current user.
 static BOOL GetWidgetStateFilePath(wchar_t* PathOut, size_t PathOutCount)
 {
+	// The widget package's LocalState folder name carries a stable publisher-hash suffix,
+	// so once we resolve the full path we cache it and skip re-enumerating the Packages
+	// directory on every subsequent call.
+	static wchar_t CachedPath[MAX_PATH] = { 0 };
+	if (CachedPath[0] != L'\0')
+	{
+		wcsncpy_s(PathOut, PathOutCount, CachedPath, _TRUNCATE);
+		return(TRUE);
+	}
+
 	wchar_t LocalAppData[MAX_PATH];
 	if (FAILED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, LocalAppData)))
 	{
@@ -662,6 +674,7 @@ static BOOL GetWidgetStateFilePath(wchar_t* PathOut, size_t PathOutCount)
 					LocalAppData, FindData.cFileName, WIDGET_STATE_FILE_NAME) >= 0)
 			{
 				Found = TRUE;
+				wcsncpy_s(CachedPath, _countof(CachedPath), PathOut, _TRUNCATE);
 			}
 			break;
 		}
@@ -712,6 +725,30 @@ void UpdateWidgetState(void)
 	WriteFile(File, Bom, sizeof(Bom), &Written, NULL);
 	WriteFile(File, Contents, (DWORD)(Length * sizeof(wchar_t)), &Written, NULL);
 	CloseHandle(File);
+}
+
+// Called periodically from the main loop. The widget state file lives in the widget
+// package's LocalState folder, which only exists once the widget is installed. If the
+// widget is installed (or reinstalled) after we start, that folder appears with no state
+// file, so the widget would show "Start" until the next pause toggle. Republish it, but
+// only when the file is actually missing, so we don't rewrite it on every tick while idle.
+void RepublishWidgetStateIfMissing(void)
+{
+	if (gConfig.WidgetPause == FALSE)
+	{
+		return;
+	}
+
+	wchar_t FilePath[MAX_PATH];
+	if (GetWidgetStateFilePath(FilePath, _countof(FilePath)) == FALSE)
+	{
+		return; // Widget not installed yet; nothing to publish.
+	}
+
+	if (GetFileAttributesW(FilePath) == INVALID_FILE_ATTRIBUTES)
+	{
+		UpdateWidgetState();
+	}
 }
 
 // Deletes the widget state file (best effort) so the Game Bar widget shows the
