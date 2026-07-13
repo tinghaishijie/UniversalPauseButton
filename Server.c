@@ -22,7 +22,6 @@
 
 // Global variables
 bool serverRunning = true;
-HANDLE serverThreadHandle;
 
 static SOCKET serverSocket = INVALID_SOCKET;
 
@@ -152,18 +151,12 @@ static int write_to_buf(char** buf, int* rem_chars, const char* format, ...) {
 char conn_info_buffer[MAX_CONNECTION_INFO_BUFFER];
 
 char* get_connection_info(int port) {
-    // Initialize Winsock
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        DbgPrint(L"WSAStartup failed\n");
-        return NULL;
-    }
-
+    // Winsock is already initialized by serve_start(); get_connection_info is only
+    // reachable while the server is running, so we neither init nor clean it up here.
     ULONG outBufLen = 15000;   // Initial buffer size
     PIP_ADAPTER_ADDRESSES pAddresses = (IP_ADAPTER_ADDRESSES*)malloc(outBufLen);
     if (pAddresses == NULL) {
         DbgPrint(L"Memory allocation failed\n");
-        WSACleanup();
         return NULL;
     }
 
@@ -182,7 +175,6 @@ char* get_connection_info(int port) {
         pAddresses = (IP_ADAPTER_ADDRESSES*)malloc(outBufLen);
         if (pAddresses == NULL) {
             DbgPrint(L"Memory allocation failed\n");
-            WSACleanup();
             return NULL;
         }
 
@@ -198,7 +190,6 @@ char* get_connection_info(int port) {
     if (result != NO_ERROR) {
         DbgPrint(L"GetAdaptersAddresses failed with error code %lu\n", result);
         free(pAddresses);
-        WSACleanup();
         return NULL;
     }
 
@@ -275,7 +266,6 @@ char* get_connection_info(int port) {
     }
 
     free(pAddresses);
-    WSACleanup();
     return conn_info_buffer;
 }
 
@@ -318,7 +308,6 @@ bool serve_request(bool isPaused) {
             }
             else if (strstr(buffer, "GET /connection-info") != NULL) {
                 send_str(clientSocket, plainResponseHeader);
-                isPaused = !isPaused;
 
                 char *connection_info = get_connection_info(webPort);
 
@@ -487,17 +476,19 @@ int serve_start(int port) {
 
 int serve_stop(void) {
     if (serverRunning) {
-        // Shutdown the server thread
         serverRunning = false;
-
-        // Wait for server thread to finish (with timeout)
-        WaitForSingleObject(serverThreadHandle, 5000);
-        CloseHandle(serverThreadHandle);
 
         // Clean up
         closesocket(serverSocket);
         WSACleanup();
-        DbgPrint(L"Web server thread exiting cleanly\n");
+
+        // Release the HTML pages loaded from resources in serve_start().
+        free(mainPage);
+        mainPage = NULL;
+        free(welcomePage);
+        welcomePage = NULL;
+
+        DbgPrint(L"Web server stopped cleanly\n");
         return 0;
     }
 

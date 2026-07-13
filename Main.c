@@ -412,7 +412,10 @@ BOOL IsGameBarProcessId(u32 ProcessId)
 // Suspends all threads of the given process and records it as the currently paused process.
 void PauseProcessById(u32 ProcessId)
 {
-	HANDLE ProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, ProcessId);
+	// NtSuspendProcess only needs PROCESS_SUSPEND_RESUME. Requesting the minimum
+	// rights (instead of PROCESS_ALL_ACCESS) lets us pause processes we could not
+	// otherwise fully open, and follows least-privilege.
+	HANDLE ProcessHandle = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, ProcessId);
 	if (ProcessHandle == NULL)
 	{
 		MsgBox(L"Failed to open process %d! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, ProcessId, GetLastError());
@@ -806,7 +809,8 @@ void UnpausePreviouslyPausedProcess(void)
 	HANDLE ProcessHandle = NULL;
 	DbgPrint(L"Pause key pressed. Attempting to un-pause previously paused PID %d.", gPreviouslyPausedProcessId);
 
-	ProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, gPreviouslyPausedProcessId);
+	// NtResumeProcess only needs PROCESS_SUSPEND_RESUME (see PauseProcessById).
+	ProcessHandle = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, gPreviouslyPausedProcessId);
 	if (ProcessHandle == NULL)
 	{
 		// Maybe the previously paused process was killed, no longer exists?
