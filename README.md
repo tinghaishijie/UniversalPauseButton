@@ -14,7 +14,7 @@ A tiny Windows tray app: it suspends the foreground window's process (or a named
 2. Focus your game and press **Pause/Break** to freeze it; press again to un-freeze.
 3. Click the tray icon to quit.
 
-Other ways to toggle pause: a custom hotkey, automatically on sleep/wake, from a phone via the built-in web server, or via the Xbox Game Bar widget.
+Other ways to toggle pause: a custom hotkey, automatically on sleep/wake, or via the Xbox Game Bar widget.
 
 > ⚠️ Best for **single-player** games. Pausing a multiplayer game will get you kicked. Since suspending a process is something only debuggers normally do, results vary by app — test before relying on it.
 
@@ -29,7 +29,6 @@ All values live under `HKCU\Software\UniversalPauseButton`. Out-of-range values 
 | `PauseKey` | DWORD | `0x13` | 0x1–0xFE | [Virtual-key code](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes) of the hotkey (default = Pause/Break). |
 | `PauseKeyModifiers` | DWORD | `0` | 0–0xF | Modifier bitmask: ALT=1, CTRL=2, SHIFT=4, WIN=8 (combine as needed). |
 | `ProcessNameToPause` | String | `""` | — | Always pause this process by name (e.g. `game.exe`), ignoring the foreground window. First match only. |
-| `WebPort` | DWORD | `0` | 0–65535 | If non-zero, start a small web server on this port so a phone/browser can toggle pause. `0` = disabled. |
 | `PauseOnSleep` | DWORD | `1` | 0–1 | Auto-pause when the PC sleeps and auto-resume on wake. |
 | `WidgetPause` | DWORD | `1` | 0–1 | Create the shared event (`Global\UniversalPauseButtonToggle`) the Game Bar widget uses. |
 | `Autostart` | DWORD | `0` | 0–1 | Register in the per-user Run key to launch at sign-in. |
@@ -56,7 +55,7 @@ The keyboard hotkey keeps working in the Xbox full-screen experience (FSE) becau
 2. 切到游戏窗口，按 **Pause/Break** 冻结它；再按一次解冻。
 3. 点击托盘图标可退出。
 
-其他触发方式：自定义热键、睡眠/唤醒时自动暂停、通过内置 Web 服务用手机控制、或使用 Xbox Game Bar 小组件。
+其他触发方式：自定义热键、睡眠/唤醒时自动暂停、或使用 Xbox Game Bar 小组件。
 
 > ⚠️ 仅适合**单人游戏**。暂停多人游戏会被踢出房间。挂起进程通常只有调试器才会做，效果因程序而异，请先测试再依赖。
 
@@ -71,7 +70,6 @@ The keyboard hotkey keeps working in the Xbox full-screen experience (FSE) becau
 | `PauseKey` | DWORD | `0x13` | 0x1–0xFE | 热键的[虚拟键码](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes)（默认为 Pause/Break）。 |
 | `PauseKeyModifiers` | DWORD | `0` | 0–0xF | 修饰键位掩码：ALT=1、CTRL=2、SHIFT=4、WIN=8（可组合相加）。 |
 | `ProcessNameToPause` | 字符串 | `""` | — | 始终按名字暂停该进程（如 `game.exe`），忽略前台窗口；只匹配第一个。 |
-| `WebPort` | DWORD | `0` | 0–65535 | 非 0 时在该端口启动小型 Web 服务，供手机/浏览器切换暂停；`0` 为禁用。 |
 | `PauseOnSleep` | DWORD | `1` | 0–1 | 睡眠时自动暂停、唤醒时自动恢复。 |
 | `WidgetPause` | DWORD | `1` | 0–1 | 创建 Game Bar 小组件所用的共享事件（`Global\UniversalPauseButtonToggle`）。 |
 | `Autostart` | DWORD | `0` | 0–1 | 写入当前用户的 Run 键，登录时自动启动。 |

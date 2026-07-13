@@ -20,7 +20,6 @@
 #include <shlobj.h>
 #include "Main.h"
 #include "resource.h"
-#include "Server.h"
 
 CONFIG gConfig;
 HANDLE gDbgConsole = INVALID_HANDLE_VALUE;
@@ -44,8 +43,6 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 	HMODULE NtDll = NULL;
 	MSG WndMsg = { 0 };
 	//HHOOK KeyboardHook = NULL;
-
-	bool runningServer = false;
 
 	if (LoadRegistrySettings() != ERROR_SUCCESS)
 	{
@@ -152,21 +149,6 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 
 	DbgPrint(L"Registered hotkey 0x%x with modifiers 0x%x.", gConfig.PauseKey, gConfig.PauseKeyModifiers);
 
-	runningServer = (gConfig.WebPort != 0);
-
-	if (runningServer)
-	{
-		DbgPrint(L"Starting Server!");
-
-		if (serve_start(gConfig.WebPort))
-		{
-			MsgBox(L"Failed to start webserver!", APPNAME L" Error", MB_OK | MB_ICONERROR);
-			runningServer = false;
-		}
-
-		openWelcomePageInBrowser(gConfig.WebPort);
-	}
-
 	// The Game Bar widget can toggle pausing by signaling a shared named event. This
 	// is useful in the Xbox full-screen experience / Game Bar, where you can focus the
 	// widget and press A to pause from the Game Bar UI. Create that event so the widget
@@ -218,9 +200,6 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			}
 		}
 
-		if (runningServer && serve_request(gIsPaused))
-			HandlePauseKeyPress();
-
 		// The Game Bar widget signals this event when its pause button is pressed, so
 		// pause/un-pause works from the Game Bar UI even in the Xbox full-screen experience.
 		if (gPauseSignalEvent != NULL && WaitForSingleObject(gPauseSignalEvent, 0) == WAIT_OBJECT_0)
@@ -261,9 +240,6 @@ Exit:
 		CloseHandle(gPauseSignalEvent);
 		gPauseSignalEvent = NULL;
 	}
-
-	if(runningServer)
-		serve_stop();
 
 	return(0);
 }
@@ -878,14 +854,6 @@ u32 LoadRegistrySettings(void)
 			.MinValue = NULL,
 			.MaxValue = NULL,
 			.Destination = &gConfig.ProcessNameToPause
-		},
-		{
-			.Name = L"WebPort",
-			.DataType = REG_DWORD,
-			.DefaultValue = &(u32) { 0 },
-			.MinValue = &(u32) { 0 },
-			.MaxValue = &(u32) { 65535 },
-			.Destination = &gConfig.WebPort
 		},
 		{
 			.Name = L"PauseOnSleep",
