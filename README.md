@@ -1,148 +1,93 @@
 # Universal Pause Button
-------------------------
 
-<img src="https://github.com/ryanries/UniversalPauseButton/blob/master/NiceLogo.png" width="128" height="128" alt="Universal Pause Button"> Pause.
+<img src="https://github.com/ryanries/UniversalPauseButton/blob/master/NiceLogo.png" width="128" height="128" alt="Universal Pause Button">
 
 <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/ryanries/UniversalPauseButton/total">
 
-I like to play video games. I also have a significant other, and she often walks into the room to talk to me while I'm playing video games. I would like to pause the game so that I can give her my undivided attention while she's talking to me, but a lot of games (particularly single-player ones) have these "un-pausable" cut scenes or other areas of the game where the normal pause functionality doesn't work.  This annoys both me and her, because I'm supposed to be the computer expert, and it looks like I don't even know how to pause my stupid video game. So usually what ends up happening is either I skip the cut scene and miss the story, or upset my SO by not paying attention to her as well as I should.
+Pause **any** game or app — even during those "un-pausable" cutscenes — by pressing the **Pause/Break** key. Press again to resume.
 
-So that is why I wrote Universal Pause Button. It's a very simple Windows desktop app that sits in the system tray. Its icon resembles a pause button. When you hit the actual Pause key (also known as Break) on your keyboard, (you can also define your own custom pause key in the registry,) the program determines which window is currently in the foreground (i.e. your game's window,) and pauses it. No matter where you are in the game. Even in the middle of one of those pesky cutscenes that would otherwise be un-pausable. When you press the key again, the game will un-pause. You can also specify a process by name in the registry to pause and un-pause that process, regardless of whatever the foreground window may be.
+A tiny Windows tray app: it suspends the foreground window's process (or a named process) using `NtSuspendProcess`, and resumes it later. Originally written in 2015 and rewritten in 2023.
 
-I first wrote this app in 2015, but mostly forgot about it since then. But it has always been my most popular app on Github, so today in 2023 I've come back and rewritten the app from scratch, 8 years later, adding several improvements and requested features along the way.
+## Usage
 
-Back in 2015, I used this app with The Witcher 3, and it worked great.
+1. Run `UniversalPauseButton.exe`. It lives in the system tray (pause-button icon).
+2. Focus your game and press **Pause/Break** to freeze it; press again to un-freeze.
+3. Click the tray icon to quit.
 
-Today in 2023, I used this app with Baldur's Gate 3 and it is still working great.
+Other ways to toggle pause: a custom hotkey, an Xbox controller combo (**Back + Start + LT + RT**), automatically on sleep/wake, from a phone via the built-in web server, or via the Xbox Game Bar widget.
 
-However, your mileage may vary. It does not work with every app/game. "Pausing" processes is something that usually only debuggers do, and not every process will react the same way to being paused. Pausing processes may lead to race conditions among the threads of that process, but like I said, testing has been very positive for me so far. I've already gotten great value out of the program, as there are lots of cut scenes in The Witcher 3 that I don't want to skip. The main use case for this app is single player games, as pausing your multi-player game will undoubtedly just get you kicked from the session, as if your computer had just crashed or hung. So don't use it in multi-player games. It also works on applications that are not games at all.
+> ⚠️ Best for **single-player** games. Pausing a multiplayer game will get you kicked. Since suspending a process is something only debuggers normally do, results vary by app — test before relying on it.
 
-There are some new registry settings you should be aware of:
+## Registry settings
+
+All values live under `HKCU\Software\UniversalPauseButton`. Out-of-range values fall back to the default.
+
+| Setting | Type | Default | Range / values | Description |
+| --- | --- | --- | --- | --- |
+| `Debug` | DWORD | `0` | 0–1 | Spawn a console showing internal debug messages. |
+| `TrayIcon` | DWORD | `1` | 0–1 | Show the tray icon. `0` runs fully invisibly (for shells with no tray). |
+| `PauseKey` | DWORD | `0x13` | 0x1–0xFE | [Virtual-key code](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes) of the hotkey (default = Pause/Break). |
+| `PauseKeyModifiers` | DWORD | `0` | 0–0xF | Modifier bitmask: ALT=1, CTRL=2, SHIFT=4, WIN=8 (combine as needed). |
+| `ProcessNameToPause` | String | `""` | — | Always pause this process by name (e.g. `game.exe`), ignoring the foreground window. First match only. |
+| `WebPort` | DWORD | `0` | 0–65535 | If non-zero, start a small web server on this port so a phone/browser can toggle pause. `0` = disabled. |
+| `PauseOnSleep` | DWORD | `1` | 0–1 | Auto-pause when the PC sleeps and auto-resume on wake. |
+| `ControllerPause` | DWORD | `1` | 0–1 | Toggle pause with the Xbox controller combo Back + Start + LT + RT. |
+| `WidgetPause` | DWORD | `1` | 0–1 | Create the shared event (`Global\UniversalPauseButtonToggle`) the Game Bar widget uses. |
+| `Autostart` | DWORD | `0` | 0–1 | Register in the per-user Run key to launch at sign-in. |
 
 ![Registry](https://github.com/ryanries/UniversalPauseButton/blob/master/registry.png)
 
-All registry settings are in HKCU\Software\UniversalPauseButton.
-
-**Debug**
-
-    Type: DWORD
-	
-    Default: 0
-	
-	Minimum: 0
-	
-	Maximum: 1
-	
-
-By enabling this Debug setting, the app spawns a debug console that allows you to see all the internal messages generated by UniversalPauseButton. It is mostly intended just for use by me during debugging. But you can turn it on if you are having issues with the app and want to troubleshoot.
-
-![Debug Console](https://github.com/ryanries/UniversalPauseButton/blob/master/debugconsole.png)
-
-**PauseKey**
-
-    Type: DWORD
-	
-    Default: 0x13
-	
-	Minimum: 0x1
-	
-	Maximum: 0xFE
-	
-
-This is the customizable Pause key. By default, it is 0x13, which is the virtual key code for the Pause/Break key on your keyboard. For a list of virtual key codes so that you can map this to another key, use the virtual key codes defined in the Windows documentation here: https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-
-**TrayIcon**
-
-    Type: DWORD
-	
-    Default: 1
-	
-	Minimum: 0
-	
-	Maximum: 1
-
-
-If TrayIcon is enabled, which it is by default, there will be a small system tray icon that looks like a pause button. When you click that icon it will give you a dialog box asking if you want to exit the app. If you turn TrayIcon off, there will be no tray icon, no taskbar icon, no nothing. The app will be completely invisible and in the background. I added this feature because someone requested it, saying that they use a custom shell other than Explorer.exe, and since they didn't have a system tray in their shell, the app wouldn't work. Well, here you go, Mr. Alternative Shell.
-
-**ProcessNameToPause**
-
-    Type: REG_SZ (String)
-	
-	Default: "" (Empty string)
-	
-	Minimum: n/a
-	
-	Maximum: n/a
-	
-
-If ProcessNameToPause is defined, then the app will only pause that process by name, regardless of foreground window. E.g., notepad.exe or mycoolgame.exe. Include the .exe file extension. It expects process name, not Window text. WARNING: In case there are multiple processes with the same name, only the first instance found will be paused. Please don't try dumb things like trying to pause svchost.exe or lsass.exe or csrss.exe...
-
-**WebPort**
-
-    Type: REG_SZ (String)
-	
-	Default: "" (Empty string)
-	
-	Minimum: n/a
-	
-	Maximum: n/a
-	
-
-If WebPort is defined, then the app will open up a port for which another device, such as a phone can connect to. This can be useful for games which take control of the keyboard and do not allow key presses to flow to the Universal Pause Button app.
-
-    Type: DWORD
-	
-    Default: 0x0 (Disabled)
-	
-	Minimum: 0x0
-	
-	Maximum: 0xFFFF
-
-**PauseOnSleep**
-
-    Type: DWORD
-	
-    Default: 1
-	
-	Minimum: 0
-	
-	Maximum: 1
-	
-
-If PauseOnSleep is enabled (which it is by default), the app will automatically pause the game when your PC goes to sleep (suspend), and automatically un-pause it when the PC wakes back up. This is handy so that your game is cleanly frozen while the machine sleeps and resumes exactly where you left off. If ProcessNameToPause is set, that named process is the one paused; otherwise the last foreground process seen before sleep is paused. The Xbox Game Bar overlay (Win+G) is deliberately excluded from this foreground tracking, so opening Game Bar right before sleep won't cause the app to accidentally pause Game Bar instead of the game underneath it. Note: if you paused something manually before the PC slept, it is left untouched and will not be auto-un-paused on wake. This feature requires a window to receive power notifications, so the app will create a hidden window even if TrayIcon is disabled.
-
-**WidgetPause**
-
-    Type: DWORD
-
-    Default: 1
-
-	Minimum: 0
-
-	Maximum: 1
-
-If WidgetPause is enabled (the default), the app creates a named event (`Global\UniversalPauseButtonToggle`) that the Xbox Game Bar widget can signal to toggle pausing. See the "Xbox full-screen experience / Game Bar widget" section below. Set it to 0 to disable creating the event.
-
-**Autostart**
-
-    Type: DWORD
-
-    Default: 0
-
-	Minimum: 0
-
-	Maximum: 1
-
-If Autostart is enabled, the app registers itself in the per-user startup key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) so it launches automatically every time you sign in to Windows. When set back to 0, the app removes that entry on next launch. The setting is applied every time the app starts, so the Run entry always points at the current location of the executable. Note: on the Xbox full-screen experience (Xbox Mode / FSE) handheld shell, classic logon autostart (Run keys, Startup folder, logon-triggered scheduled tasks) is deferred until you exit to the desktop; only the FSE's own "launch at sign in" list starts apps at actual FSE login.
+Notes: if `ProcessNameToPause` is set, that named process is paused (never `svchost.exe`, `lsass.exe`, etc.). On sleep, if it's unset, the last foreground process is paused; a process you paused manually is left untouched. The Xbox Game Bar overlay is excluded from foreground tracking.
 
 ## Xbox full-screen experience / Game Bar widget
 
-The controller pause combo (Back + Start + LT + RT) is detected by polling XInput in the background. This works on a normal desktop, but **stops working while the Xbox full-screen experience (Xbox Mode / FSE) or the Game Bar is in the foreground**: that shell takes exclusive control of the controller, so a background app like Universal Pause Button no longer receives any controller input. This is a Windows design limitation, not a bug — it also affects the keyboard, but the keyboard hotkey keeps working because it is a system-level global hotkey.
+The controller combo works on the desktop but **stops while the Xbox full-screen experience (FSE) or Game Bar is in front** — that shell takes exclusive control of the controller. The keyboard hotkey still works (it's a system-level global hotkey).
 
-To pause/resume while the Xbox full-screen experience is active, use the **Universal Pause Button Game Bar widget** in the `GameBarWidget` folder. It adds a single "Pause / Resume" button to the Xbox Game Bar. Because Game Bar widgets receive gamepad navigation even in FSE, you can open Game Bar (Xbox button / Win+G), focus the widget, and press A to toggle pausing. The widget signals the main app through the shared `Global\UniversalPauseButtonToggle` event, so the main Universal Pause Button app must be running.
+To pause/resume in FSE, use the **Game Bar widget** in the [`GameBarWidget`](GameBarWidget) folder: it adds a Pause/Resume button to the Xbox Game Bar and signals the main app through the shared event, so the main app must be running. See [`GameBarWidget/README.md`](GameBarWidget/README.md) to build and sideload it.
 
-See `GameBarWidget/README.md` for how to build and sideload the widget.
+---
 
-As always, please try it out, and let me know if you find any bugs or have any feature requests.
+# 中文使用说明
 
-Thanks!
+一键暂停**任意**游戏或程序——即便是那些无法暂停的过场动画。按下 **Pause/Break** 键暂停，再按一次恢复。
+
+这是一个极小的 Windows 托盘程序：用 `NtSuspendProcess` 挂起当前前台窗口对应的进程（或指定名字的进程），之后再恢复。最初写于 2015 年，2023 年重写。
+
+## 使用方法
+
+1. 运行 `UniversalPauseButton.exe`，程序常驻系统托盘（暂停按钮图标）。
+2. 切到游戏窗口，按 **Pause/Break** 冻结它；再按一次解冻。
+3. 点击托盘图标可退出。
+
+其他触发方式：自定义热键、Xbox 手柄组合键（**Back + Start + LT + RT**）、睡眠/唤醒时自动暂停、通过内置 Web 服务用手机控制、或使用 Xbox Game Bar 小组件。
+
+> ⚠️ 仅适合**单人游戏**。暂停多人游戏会被踢出房间。挂起进程通常只有调试器才会做，效果因程序而异，请先测试再依赖。
+
+## 注册表设置
+
+所有设置位于 `HKCU\Software\UniversalPauseButton`，超出范围的值会回退到默认值。
+
+| 设置项 | 类型 | 默认 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `Debug` | DWORD | `0` | 0–1 | 弹出控制台显示内部调试信息。 |
+| `TrayIcon` | DWORD | `1` | 0–1 | 是否显示托盘图标；`0` 表示完全隐藏运行（适合无托盘的 shell）。 |
+| `PauseKey` | DWORD | `0x13` | 0x1–0xFE | 热键的[虚拟键码](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes)（默认为 Pause/Break）。 |
+| `PauseKeyModifiers` | DWORD | `0` | 0–0xF | 修饰键位掩码：ALT=1、CTRL=2、SHIFT=4、WIN=8（可组合相加）。 |
+| `ProcessNameToPause` | 字符串 | `""` | — | 始终按名字暂停该进程（如 `game.exe`），忽略前台窗口；只匹配第一个。 |
+| `WebPort` | DWORD | `0` | 0–65535 | 非 0 时在该端口启动小型 Web 服务，供手机/浏览器切换暂停；`0` 为禁用。 |
+| `PauseOnSleep` | DWORD | `1` | 0–1 | 睡眠时自动暂停、唤醒时自动恢复。 |
+| `ControllerPause` | DWORD | `1` | 0–1 | 用手柄组合键 Back + Start + LT + RT 切换暂停。 |
+| `WidgetPause` | DWORD | `1` | 0–1 | 创建 Game Bar 小组件所用的共享事件（`Global\UniversalPauseButtonToggle`）。 |
+| `Autostart` | DWORD | `0` | 0–1 | 写入当前用户的 Run 键，登录时自动启动。 |
+
+说明：设置了 `ProcessNameToPause` 时只暂停该进程（切勿填 `svchost.exe`、`lsass.exe` 等系统进程）。睡眠时若未设置该项，则暂停最后的前台进程；你手动暂停的进程不会被自动处理。Xbox Game Bar 覆盖层已从前台跟踪中排除。
+
+## Xbox 全屏体验 / Game Bar 小组件
+
+手柄组合键在桌面可用，但**当 Xbox 全屏体验（FSE）或 Game Bar 处于前台时会失效**——该 shell 独占了手柄输入。键盘热键仍然有效（它是系统级全局热键）。
+
+要在 FSE 下暂停/恢复，请使用 [`GameBarWidget`](GameBarWidget) 文件夹中的 **Game Bar 小组件**：它在 Xbox Game Bar 中加一个"暂停/恢复"按钮，并通过共享事件通知主程序，因此主程序必须处于运行状态。构建与旁加载方法见 [`GameBarWidget/README.md`](GameBarWidget/README.md)。
+
+---
+
+Joseph Ryan Ries, 2015–2023 · ryanries09@gmail.com · [GitHub](https://github.com/ryanries/UniversalPauseButton/)
