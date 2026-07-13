@@ -12,6 +12,9 @@
 #endif
 
 #define WM_TRAYICON (WM_USER + 1)
+#define IDT_CURSOR_IDLE_TIMER 2001
+
+#define OEMRESOURCE   // Required for the OCR_* system cursor id constants.
 
 #include <Windows.h>
 #include <stdio.h>
@@ -20,6 +23,10 @@
 #include <shlobj.h>
 #include "Main.h"
 #include "resource.h"
+
+#ifndef OCR_HELP
+#define OCR_HELP 32651
+#endif
 
 CONFIG gConfig;
 HANDLE gDbgConsole = INVALID_HANDLE_VALUE;
@@ -33,6 +40,22 @@ BOOL gPausedBySleep;
 HANDLE gPauseSignalEvent = NULL;
 HWINEVENTHOOK gForegroundHook = NULL;
 wchar_t gPausedProcessName[128];
+
+// Idle cursor-hiding state.
+HHOOK gMouseHook = NULL;
+HCURSOR gBlankCursor = NULL;
+BOOL gIsCursorHidden = FALSE;
+u32 gLastRealMoveTick = 0;
+POINT gLastMousePos = { 0 };
+BOOL gHaveLastMousePos = FALSE;
+
+// The complete set of system cursors we override when hiding, so the pointer stays
+// invisible over any control. SetSystemCursor(SPI_SETCURSORS) restores them.
+static const DWORD gOcrIds[] = {
+	OCR_NORMAL, OCR_IBEAM, OCR_WAIT, OCR_CROSS, OCR_UP,
+	OCR_SIZENWSE, OCR_SIZENESW, OCR_SIZEWE, OCR_SIZENS, OCR_SIZEALL,
+	OCR_NO, OCR_HAND, OCR_APPSTARTING, OCR_HELP
+};
 
 
 int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _In_ PWSTR CmdLine, _In_ int CmdShow)
@@ -80,13 +103,13 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 	// shell even has a taskbar so I'm skipping that too.
 
 	// A hidden top-level window is required to receive WM_POWERBROADCAST (sleep/wake)
-	// notifications. So we create the window if EITHER the tray icon OR the
-	// PauseOnSleep feature is enabled. The system tray icon itself is only added
-	// when TrayIcon is enabled.
-	if (gConfig.TrayIcon || gConfig.PauseOnSleep)
+	// notifications and the cursor idle-check timer. So we create the window if the
+	// tray icon, the PauseOnSleep feature, or the idle-cursor feature is enabled. The
+	// system tray icon itself is only added when TrayIcon is enabled.
+	HWND HWnd = NULL;
+	if (gConfig.TrayIcon || gConfig.PauseOnSleep || gConfig.HideIdleCursor)
 	{
 		WNDCLASSW WndClass = { 0 };
-		HWND HWnd = NULL;
 
 		WndClass.hInstance = Instance;
 		WndClass.lpszClassName = APPNAME L"_WndClass";
@@ -170,7 +193,8 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 	// Track foreground changes via an event hook instead of polling GetForegroundWindow()
 	// every tick, so the main loop can block instead of busy-spinning. The callback runs
 	// out-of-context on this thread while it pumps messages (no injected DLL / extra thread).
-	if (gConfig.PauseOnSleep)
+	// It is also used by the idle-cursor feature to re-hide the pointer on app switches.
+	if (gConfig.PauseOnSleep || (gConfig.HideIdleCursor && gConfig.HideCursorOnAppSwitch))
 	{
 		gForegroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
 			NULL, ForegroundChangeProc, 0, 0,
@@ -198,6 +222,27 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			{
 				gLastForegroundProcessId = InitialProcessId;
 			}
+		}
+	}
+
+	// Idle-cursor feature: install a global low-level mouse hook and start the idle
+	// timer. The hook shows the pointer only on genuine movement (physical or
+	// gamepad-driven); the timer re-hides it after CursorIdleTimeoutMs of stillness.
+	if (gConfig.HideIdleCursor)
+	{
+		gMouseHook = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, GetModuleHandleW(NULL), 0);
+		if (gMouseHook == NULL)
+		{
+				DbgPrint(L"Failed to install low-level mouse hook! Error 0x%08lx; idle-cursor disabled.", GetLastError());
+		}
+		else
+		{
+				DbgPrint(L"Idle-cursor enabled. TimeoutMs=%d MoveThreshold=%d OnAppSwitch=%d.",
+					gConfig.CursorIdleTimeoutMs, gConfig.CursorMoveThreshold, gConfig.HideCursorOnAppSwitch);
+
+				gLastRealMoveTick = GetTickCount();
+				SetTimer(HWnd, IDT_CURSOR_IDLE_TIMER, 250, NULL);
+				HideCursorNow();
 		}
 	}
 
@@ -270,6 +315,21 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 	}
 
 Exit:
+	if (gMouseHook != NULL)
+	{
+		UnhookWindowsHookEx(gMouseHook);
+		gMouseHook = NULL;
+	}
+
+	// Never leave the system with an invisible pointer.
+	ShowCursorNow();
+
+	if (gBlankCursor != NULL)
+	{
+		DestroyCursor(gBlankCursor);
+		gBlankCursor = NULL;
+	}
+
 	if (gForegroundHook != NULL)
 	{
 		UnhookWinEvent(gForegroundHook);
@@ -306,7 +366,21 @@ void CALLBACK ForegroundChangeProc(HWINEVENTHOOK Hook, DWORD Event, HWND Window,
 	UNREFERENCED_PARAMETER(IdEventThread);
 	UNREFERENCED_PARAMETER(EventTime);
 
-	if (Event != EVENT_SYSTEM_FOREGROUND || Window == NULL || gIsPaused)
+	if (Event != EVENT_SYSTEM_FOREGROUND || Window == NULL)
+	{
+		return;
+	}
+
+	// Switching apps makes Windows reveal the pointer over the newly active window.
+	// Re-hide it at once so it doesn't linger until the idle timeout elapses.
+	if (gConfig.HideIdleCursor && gConfig.HideCursorOnAppSwitch)
+	{
+		// Backdate the idle clock so the pointer stays hidden until real movement.
+		gLastRealMoveTick = GetTickCount() - gConfig.CursorIdleTimeoutMs;
+		HideCursorNow();
+	}
+
+	if (gIsPaused)
 	{
 		return;
 	}
@@ -320,6 +394,142 @@ void CALLBACK ForegroundChangeProc(HWINEVENTHOOK Hook, DWORD Event, HWND Window,
 	{
 		gLastForegroundProcessId = ForegroundProcessId;
 	}
+}
+
+// The heart of the idle-cursor feature: show the pointer only when it is really
+// moved, whether by a physical mouse or a gamepad-driven mapping. Movement is judged
+// by actual position change so the zero-delta synthetic WM_MOUSEMOVE that Windows
+// emits when you switch foreground apps can't summon the pointer.
+LRESULT CALLBACK LowLevelMouseProc(_In_ int Code, _In_ WPARAM WParam, _In_ LPARAM LParam)
+{
+	if (Code == HC_ACTION)
+	{
+		const MSLLHOOKSTRUCT* Info = (const MSLLHOOKSTRUCT*)LParam;
+		BOOL Activity = FALSE;
+
+		if (WParam == WM_MOUSEMOVE)
+		{
+			// Only count moves that change the pointer position by more than the
+			// threshold. This filters the app-switch synthetic move (zero delta) and
+			// tiny jitter, while genuine mouse/gamepad motion passes through.
+			if (gHaveLastMousePos)
+			{
+				LONG dx = Info->pt.x - gLastMousePos.x;
+				LONG dy = Info->pt.y - gLastMousePos.y;
+				if (dx < 0) dx = -dx;
+				if (dy < 0) dy = -dy;
+				if ((u32)dx > gConfig.CursorMoveThreshold || (u32)dy > gConfig.CursorMoveThreshold)
+				{
+					Activity = TRUE;
+				}
+			}
+			gLastMousePos = Info->pt;
+			gHaveLastMousePos = TRUE;
+		}
+		else if (WParam == WM_LBUTTONDOWN || WParam == WM_RBUTTONDOWN ||
+				 WParam == WM_MBUTTONDOWN || WParam == WM_XBUTTONDOWN ||
+				 WParam == WM_MOUSEWHEEL || WParam == WM_MOUSEHWHEEL)
+		{
+			// A click or scroll is always intentional activity.
+			Activity = TRUE;
+		}
+
+		if (Activity)
+		{
+			gLastRealMoveTick = GetTickCount();
+			if (gIsCursorHidden)
+			{
+				ShowCursorNow();
+			}
+		}
+	}
+
+	return(CallNextHookEx(NULL, Code, WParam, LParam));
+}
+
+// Lazily builds a single fully-transparent cursor sized to the system cursor
+// dimensions. Returns TRUE if gBlankCursor is available.
+BOOL EnsureBlankCursor(void)
+{
+	if (gBlankCursor != NULL)
+	{
+		return(TRUE);
+	}
+
+	int Width = GetSystemMetrics(SM_CXCURSOR);
+	int Height = GetSystemMetrics(SM_CYCURSOR);
+	if (Width <= 0 || Height <= 0)
+	{
+		Width = 32;
+		Height = 32;
+	}
+
+	size_t MaskBytes = ((size_t)Width * (size_t)Height) / 8;
+	BYTE* AndMask = (BYTE*)malloc(MaskBytes);
+	BYTE* XorMask = (BYTE*)malloc(MaskBytes);
+	if (AndMask == NULL || XorMask == NULL)
+	{
+		free(AndMask);
+		free(XorMask);
+		DbgPrint(L"Failed to allocate cursor masks.");
+		return(FALSE);
+	}
+
+	// AND = 0xFF, XOR = 0x00 -> the screen shows through everywhere (invisible cursor).
+	memset(AndMask, 0xFF, MaskBytes);
+	memset(XorMask, 0x00, MaskBytes);
+
+	gBlankCursor = CreateCursor(GetModuleHandleW(NULL), 0, 0, Width, Height, AndMask, XorMask);
+
+	free(AndMask);
+	free(XorMask);
+
+	if (gBlankCursor == NULL)
+	{
+		DbgPrint(L"CreateCursor failed! Error 0x%08lx", GetLastError());
+		return(FALSE);
+	}
+
+	return(TRUE);
+}
+
+// Replace every system cursor with the transparent one. SetSystemCursor takes
+// ownership of (and destroys) the handle it is given, so each call gets its own copy.
+void HideCursorNow(void)
+{
+	if (gIsCursorHidden || !gConfig.HideIdleCursor)
+	{
+		return;
+	}
+	if (!EnsureBlankCursor())
+	{
+		return;
+	}
+
+	for (u32 i = 0; i < _countof(gOcrIds); i++)
+	{
+		HCURSOR Copy = CopyCursor(gBlankCursor);
+		if (Copy != NULL)
+		{
+			SetSystemCursor(Copy, gOcrIds[i]);
+		}
+	}
+
+	gIsCursorHidden = TRUE;
+	DbgPrint(L"Cursor hidden.");
+}
+
+// Restore the user's normal system cursors by reloading them from the registry.
+void ShowCursorNow(void)
+{
+	if (!gIsCursorHidden)
+	{
+		return;
+	}
+
+	SystemParametersInfoW(SPI_SETCURSORS, 0, NULL, SPIF_SENDCHANGE);
+	gIsCursorHidden = FALSE;
+	DbgPrint(L"Cursor shown (real movement).");
 }
 
 
@@ -958,6 +1168,38 @@ u32 LoadRegistrySettings(void)
 			.MaxValue = &(u32) { 1 },
 			.Destination = &gConfig.Autostart
 		},
+		{
+			.Name = L"HideIdleCursor",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 1 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 1 },
+			.Destination = &gConfig.HideIdleCursor
+		},
+		{
+			.Name = L"CursorIdleTimeoutMs",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 2000 },
+			.MinValue = &(u32) { 200 },
+			.MaxValue = &(u32) { 60000 },
+			.Destination = &gConfig.CursorIdleTimeoutMs
+		},
+		{
+			.Name = L"CursorMoveThreshold",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 0 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 200 },
+			.Destination = &gConfig.CursorMoveThreshold
+		},
+		{
+			.Name = L"HideCursorOnAppSwitch",
+			.DataType = REG_DWORD,
+			.DefaultValue = &(u32) { 1 },
+			.MinValue = &(u32) { 0 },
+			.MaxValue = &(u32) { 1 },
+			.Destination = &gConfig.HideCursorOnAppSwitch
+		},
 	};
 
 	Result = RegCreateKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\" APPNAME, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &RegKey, NULL);
@@ -1120,11 +1362,24 @@ LRESULT CALLBACK SysTrayCallback(_In_ HWND Window, _In_ UINT Message, _In_ WPARA
 
 	switch (Message)
 	{
+		case WM_TIMER:
+		{
+			if (WParam == IDT_CURSOR_IDLE_TIMER && gConfig.HideIdleCursor)
+			{
+				if (!gIsCursorHidden && (GetTickCount() - gLastRealMoveTick) >= gConfig.CursorIdleTimeoutMs)
+				{
+					HideCursorNow();
+				}
+			}
+			break;
+		}
 		case WM_TRAYICON:
 		{
 			if (!QuitMessageBoxIsShowing && (LParam == WM_LBUTTONDOWN || LParam == WM_RBUTTONDOWN || LParam == WM_MBUTTONDOWN))
 			{
 				QuitMessageBoxIsShowing = TRUE;
+				// Show the real cursor so the confirmation dialog is usable.
+				ShowCursorNow();
 				if (MessageBox(Window, L"Quit " APPNAME L"?", L"Are you sure?", MB_YESNO | MB_ICONQUESTION | MB_SYSTEMMODAL) == IDYES)
 				{
 					Shell_NotifyIconW(NIM_DELETE, &gTrayNotifyIconData);

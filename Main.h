@@ -2,7 +2,7 @@
 
 #pragma warning(disable:4820) // padding in structures
 
-#define VERSION L"1.1.6"
+#define VERSION L"1.2.0"
 #define APPNAME L"UniversalPauseButton"
 
 // Name of the named event that the Xbox Game Bar widget sets to toggle the pause
@@ -59,6 +59,13 @@ typedef struct _CONFIG
 	u32 PauseOnSleep;
 	u32 WidgetPause;
 	u32 Autostart;
+	// Idle cursor hiding (Xbox FSE handheld): hide the pointer when idle and show it
+	// again only on real pointer movement (physical mouse OR gamepad-driven), while
+	// suppressing the pointer that Windows reveals when you switch foreground apps.
+	u32 HideIdleCursor;        // Master switch (0 = feature off, preserves old behavior).
+	u32 CursorIdleTimeoutMs;   // Hide the cursor after this many ms without a real move.
+	u32 CursorMoveThreshold;   // Min pixel delta for a move to count (filters app-switch jitter).
+	u32 HideCursorOnAppSwitch; // 1 = re-hide immediately on foreground change.
 } CONFIG;
 
 // Function declarations.
@@ -81,3 +88,7 @@ void RepublishWidgetStateIfMissing(void);
 void DeleteWidgetStateFile(void);
 void GetProcessNameById(u32 ProcessId, wchar_t* Buffer, size_t BufferCount);
 void CALLBACK ForegroundChangeProc(HWINEVENTHOOK Hook, DWORD Event, HWND Window, LONG IdObject, LONG IdChild, DWORD IdEventThread, DWORD EventTime);
+LRESULT CALLBACK LowLevelMouseProc(_In_ int Code, _In_ WPARAM WParam, _In_ LPARAM LParam);
+void HideCursorNow(void);
+void ShowCursorNow(void);
+BOOL EnsureBlankCursor(void);

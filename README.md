@@ -32,6 +32,10 @@ All values live under `HKCU\Software\UniversalPauseButton`. Out-of-range values 
 | `PauseOnSleep` | DWORD | `1` | 0–1 | Auto-pause when the PC sleeps and auto-resume on wake. |
 | `WidgetPause` | DWORD | `1` | 0–1 | Create the shared event (`Global\UniversalPauseButtonToggle`) the Game Bar widget uses. |
 | `Autostart` | DWORD | `0` | 0–1 | Register in the per-user Run key to launch at sign-in. |
+| `HideIdleCursor` | DWORD | `1` | 0–1 | Hide the mouse pointer when idle in Xbox Mode; show it again only on real pointer movement (physical mouse **or** gamepad-driven), and suppress the pointer Windows reveals on app switches. |
+| `CursorIdleTimeoutMs` | DWORD | `2000` | 200–60000 | Hide the pointer after this many ms without a real move. |
+| `CursorMoveThreshold` | DWORD | `0` | 0–200 | Minimum pixel delta before a move counts (raise to ignore stick drift / jitter). |
+| `HideCursorOnAppSwitch` | DWORD | `1` | 0–1 | Re-hide the pointer immediately on foreground/app changes instead of waiting for the idle timeout. |
 
 ![Registry](https://github.com/ryanries/UniversalPauseButton/blob/master/registry.png)
 
@@ -73,6 +77,10 @@ The keyboard hotkey keeps working in the Xbox full-screen experience (FSE) becau
 | `PauseOnSleep` | DWORD | `1` | 0–1 | 睡眠时自动暂停、唤醒时自动恢复。 |
 | `WidgetPause` | DWORD | `1` | 0–1 | 创建 Game Bar 小组件所用的共享事件（`Global\UniversalPauseButtonToggle`）。 |
 | `Autostart` | DWORD | `0` | 0–1 | 写入当前用户的 Run 键，登录时自动启动。 |
+| `HideIdleCursor` | DWORD | `1` | 0–1 | 在 Xbox 模式下空闲时隐藏鼠标指针；仅在真正移动指针时（物理鼠标**或**手柄操控）才重新显示，并抑制切换应用时 Windows 自动弹出的指针。 |
+| `CursorIdleTimeoutMs` | DWORD | `2000` | 200–60000 | 无真实移动超过该毫秒数后隐藏指针。 |
+| `CursorMoveThreshold` | DWORD | `0` | 0–200 | 移动被计为有效前的最小像素位移（调大可忽略摇杆漂移/抖动）。 |
+| `HideCursorOnAppSwitch` | DWORD | `1` | 0–1 | 切换前台/应用时立即隐藏指针，而不必等待空闲超时。 |
 
 说明：设置了 `ProcessNameToPause` 时只暂停该进程（切勿填 `svchost.exe`、`lsass.exe` 等系统进程）。睡眠时若未设置该项，则暂停最后的前台进程；你手动暂停的进程不会被自动处理。Xbox Game Bar 覆盖层已从前台跟踪中排除。
 
