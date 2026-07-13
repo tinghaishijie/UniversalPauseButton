@@ -1,15 +1,14 @@
 # Universal Pause Button — Xbox Game Bar widget
 
 This is a small [Xbox Game Bar](https://learn.microsoft.com/gaming/game-bar/) widget that
-adds a single **Pause / Resume** button to Game Bar. It exists to work around a Windows
-limitation: while the **Xbox full-screen experience (Xbox Mode / FSE)** or the Game Bar is
-in the foreground, that shell takes exclusive control of the controller, so the main
-Universal Pause Button app can no longer see the `Back + Start + LT + RT` combo through
-background XInput polling.
+adds a single **Pause / Resume** button to Game Bar. It lets you pause/resume with a
+**controller** in the **Xbox full-screen experience (Xbox Mode / FSE)**.
 
-Game Bar widgets, however, still receive gamepad navigation in FSE. So you can open Game
-Bar, focus this widget, and press **A** to toggle pausing even when the controller combo
-is unavailable.
+A background app can't receive controller input while the FSE shell or Game Bar is in the
+foreground — that shell takes exclusive control of the controller. Game Bar widgets,
+however, still receive gamepad navigation in FSE. So you can open Game Bar, focus this
+widget, and press **A** to toggle pausing. (The keyboard pause hotkey also keeps working in
+FSE, since it's a system-level global hotkey.)
 
 ## How it talks to the main app
 

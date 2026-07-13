@@ -23,9 +23,9 @@ namespace UniversalPauseButton.Widget
     /// it can write to this per-user folder, and the sandboxed widget reads it with no
     /// capability. We poll it so the button shows Pause vs Resume and the paused process.
     ///
-    /// This is the workaround for the Xbox full-screen experience: while it is active the
-    /// desktop app's XInput polling can no longer see controller input, but a Game Bar
-    /// widget still receives gamepad navigation, so the user can toggle pausing from here.
+    /// This is how you pause with a controller in the Xbox full-screen experience: a
+    /// background app can't receive controller input while that shell is active, but a Game
+    /// Bar widget still receives gamepad navigation, so the user can toggle pausing from here.
     /// </summary>
     public sealed partial class MainWidget : Page
     {
