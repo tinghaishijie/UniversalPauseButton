@@ -31,6 +31,7 @@ u32 gPreviouslyPausedProcessId;
 u32 gLastForegroundProcessId;
 BOOL gPausedBySleep;
 HANDLE gPauseSignalEvent = NULL;
+HWINEVENTHOOK gForegroundHook = NULL;
 wchar_t gPausedProcessName[128];
 
 
@@ -164,58 +165,101 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 	// automatically when the user signs in, according to the Autostart registry setting.
 	UpdateAutostartRegistration();
 
+	u32 LastWidgetCheckTick = 0;
+
+	// Track foreground changes via an event hook instead of polling GetForegroundWindow()
+	// every tick, so the main loop can block instead of busy-spinning. The callback runs
+	// out-of-context on this thread while it pumps messages (no injected DLL / extra thread).
+	if (gConfig.PauseOnSleep)
+	{
+		gForegroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+			NULL, ForegroundChangeProc, 0, 0,
+			WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+
+		if (gForegroundHook == NULL)
+		{
+			// Graceful degradation: without the hook we won't track foreground changes,
+			// so on sleep we fall back to whatever GetForegroundWindow() returns then.
+			DbgPrint(L"SetWinEventHook(EVENT_SYSTEM_FOREGROUND) failed; foreground tracking disabled.");
+		}
+
+		// The hook only fires on *changes*, so seed the current foreground process now.
+		// Otherwise, if a game is already in the foreground when we start and the user
+		// sleeps without ever switching windows, gLastForegroundProcessId would stay 0
+		// and nothing would be auto-paused on sleep.
+		HWND InitialForeground = GetForegroundWindow();
+		if (InitialForeground != NULL)
+		{
+			u32 InitialProcessId = 0;
+			GetWindowThreadProcessId(InitialForeground, &InitialProcessId);
+			if (InitialProcessId != 0 &&
+				InitialProcessId != GetCurrentProcessId() &&
+				!IsGameBarProcessId(InitialProcessId))
+			{
+				gLastForegroundProcessId = InitialProcessId;
+			}
+		}
+	}
+
 	while (gIsRunning)
 	{
-		while (PeekMessageW(&WndMsg, NULL, 0, 0, PM_REMOVE))
+		// Block until something we care about happens: a window/thread message
+		// (WM_HOTKEY, WM_POWERBROADCAST, WM_TRAYICON, or a WinEvent callback), the
+		// Game Bar widget's pause signal, or the widget-state recheck timeout. This
+		// replaces the old Sleep(5) busy-poll so an idle app parks the CPU.
+		DWORD HandleCount = 0;
+		HANDLE WaitHandles[1];
+		if (gPauseSignalEvent != NULL)
 		{
-			if (WndMsg.message == WM_HOTKEY)
-			{
-				HandlePauseKeyPress();
-			}
-
-			DispatchMessageW(&WndMsg);
+			WaitHandles[HandleCount++] = gPauseSignalEvent;
 		}
 
-		// Continuously remember the last "real" foreground process (excluding our own),
-		// so that if the system sleeps we know which game process to auto-pause even if
-		// the foreground window has already changed to the lock screen / LogonUI.
-		if (gConfig.PauseOnSleep && !gIsPaused)
+		DWORD Timeout = INFINITE;
+		if (gConfig.WidgetPause)
 		{
-			HWND ForegroundWindow = GetForegroundWindow();
-			if (ForegroundWindow != NULL)
+			u32 Elapsed = GetTickCount() - LastWidgetCheckTick;
+			Timeout = (Elapsed >= 5000) ? 0 : (5000 - Elapsed);
+		}
+
+		DWORD WaitResult = MsgWaitForMultipleObjectsEx(HandleCount, WaitHandles, Timeout,
+			QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+
+		if (WaitResult == WAIT_OBJECT_0 + HandleCount)
+		{
+			// Window/thread messages are available. Draining them dispatches
+			// WM_POWERBROADCAST (SysTrayCallback) and the WinEvent foreground callback.
+			while (PeekMessageW(&WndMsg, NULL, 0, 0, PM_REMOVE))
 			{
-				u32 ForegroundProcessId = 0;
-				GetWindowThreadProcessId(ForegroundWindow, &ForegroundProcessId);
-				// Only re-evaluate when the foreground process actually changes, since this
-				// loop runs every ~5ms and the Game Bar check below takes a process snapshot.
-				// Skip our own process and the Xbox Game Bar overlay (Win+G), so we don't
-				// end up auto-pausing Game Bar instead of the game underneath it.
-				if (ForegroundProcessId != 0 &&
-					ForegroundProcessId != GetCurrentProcessId() &&
-					ForegroundProcessId != gLastForegroundProcessId &&
-					!IsGameBarProcessId(ForegroundProcessId))
+				if (WndMsg.message == WM_HOTKEY)
 				{
-					gLastForegroundProcessId = ForegroundProcessId;
+					HandlePauseKeyPress();
 				}
+
+				DispatchMessageW(&WndMsg);
 			}
 		}
-
-		// The Game Bar widget signals this event when its pause button is pressed, so
-		// pause/un-pause works from the Game Bar UI even in the Xbox full-screen experience.
-		if (gPauseSignalEvent != NULL && WaitForSingleObject(gPauseSignalEvent, 0) == WAIT_OBJECT_0)
+		else if (HandleCount == 1 && WaitResult == WAIT_OBJECT_0)
 		{
+			// The Game Bar widget signaled its pause event, so pause/un-pause works
+			// from the Game Bar UI even in the Xbox full-screen experience.
 			DbgPrint(L"Pause signal received from Game Bar widget.");
 			HandlePauseKeyPress();
 		}
+		else if (WaitResult == WAIT_FAILED)
+		{
+			// Avoid a hot error-loop if the wait keeps failing.
+			DbgPrint(L"MsgWaitForMultipleObjectsEx failed! Error 0x%08lx", GetLastError());
+			Sleep(50);
+		}
+		// WAIT_TIMEOUT falls through to the widget-state check below.
 
 		// The widget state file lives in the widget package's LocalState folder, which
 		// only exists once the widget is installed. If the widget is installed (or
 		// reinstalled) after we start, republish the file so the widget shows we're
 		// running instead of "Start" — but only when it's actually missing, so we don't
-		// write to disk on every tick while idle.
+		// write to disk on every recheck while idle.
 		if (gConfig.WidgetPause)
 		{
-			static u32 LastWidgetCheckTick = 0;
 			u32 NowTick = GetTickCount();
 			if (NowTick - LastWidgetCheckTick >= 5000)
 			{
@@ -223,11 +267,15 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 				RepublishWidgetStateIfMissing();
 			}
 		}
-
-		Sleep(5);
 	}
 
 Exit:
+	if (gForegroundHook != NULL)
+	{
+		UnhookWinEvent(gForegroundHook);
+		gForegroundHook = NULL;
+	}
+
 	if (gConfig.WidgetPause)
 	{
 		// Remove the widget state file so the Game Bar widget correctly shows the
@@ -243,6 +291,37 @@ Exit:
 
 	return(0);
 }
+
+// Out-of-context WinEvent callback that runs on our own thread while it pumps
+// messages, so it needs no injected DLL or extra thread. It records the last
+// "real" foreground process (excluding our own and the Xbox Game Bar overlay)
+// so that if the system sleeps we know which game process to auto-pause even
+// after the foreground window has changed to the lock screen / LogonUI. This
+// replaces the old per-tick GetForegroundWindow() poll in the main loop.
+void CALLBACK ForegroundChangeProc(HWINEVENTHOOK Hook, DWORD Event, HWND Window, LONG IdObject, LONG IdChild, DWORD IdEventThread, DWORD EventTime)
+{
+	UNREFERENCED_PARAMETER(Hook);
+	UNREFERENCED_PARAMETER(IdObject);
+	UNREFERENCED_PARAMETER(IdChild);
+	UNREFERENCED_PARAMETER(IdEventThread);
+	UNREFERENCED_PARAMETER(EventTime);
+
+	if (Event != EVENT_SYSTEM_FOREGROUND || Window == NULL || gIsPaused)
+	{
+		return;
+	}
+
+	u32 ForegroundProcessId = 0;
+	GetWindowThreadProcessId(Window, &ForegroundProcessId);
+	if (ForegroundProcessId != 0 &&
+		ForegroundProcessId != GetCurrentProcessId() &&
+		ForegroundProcessId != gLastForegroundProcessId &&
+		!IsGameBarProcessId(ForegroundProcessId))
+	{
+		gLastForegroundProcessId = ForegroundProcessId;
+	}
+}
+
 
 void HandlePauseKeyPress(void)
 {
@@ -834,7 +913,7 @@ u32 LoadRegistrySettings(void)
 		{
 			.Name = L"PauseKey",
 			.DataType = REG_DWORD,
-			.DefaultValue = &(u32) { VK_PAUSE },
+			.DefaultValue = &(u32) { 'P' },
 			.MinValue = &(u32) { 1 },
 			.MaxValue = &(u32) { 0xFE },
 			.Destination = &gConfig.PauseKey
@@ -842,7 +921,7 @@ u32 LoadRegistrySettings(void)
 		{
 			.Name = L"PauseKeyModifiers",
 			.DataType = REG_DWORD,
-			.DefaultValue = &(u32) { 0 },
+			.DefaultValue = &(u32) { MOD_CONTROL | MOD_SHIFT },
 			.MinValue = &(u32) { 0 },
 			.MaxValue = &(u32) { 0x000F },  // MOD_ALT|MOD_CONTROL|MOD_SHIFT|MOD_WIN
 			.Destination = &gConfig.PauseKeyModifiers
