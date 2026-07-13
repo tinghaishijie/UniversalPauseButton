@@ -16,14 +16,11 @@
 #include <Windows.h>
 #include <stdio.h>
 #include <TlHelp32.h>
-#include <Xinput.h>
 #include <sddl.h>
 #include <shlobj.h>
 #include "Main.h"
 #include "resource.h"
 #include "Server.h"
-
-#pragma comment(lib, "Xinput9_1_0.lib")
 
 CONFIG gConfig;
 HANDLE gDbgConsole = INVALID_HANDLE_VALUE;
@@ -170,10 +167,10 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 		openWelcomePageInBrowser(gConfig.WebPort);
 	}
 
-	// The Xbox full-screen experience / Game Bar takes exclusive control of the
-	// controller, so our background XInput polling stops seeing the pause combo while
-	// it is active. The Game Bar widget works around this by signaling us through a
-	// shared named event instead. Create that event so the widget can toggle pausing.
+	// The Game Bar widget can toggle pausing by signaling a shared named event. This
+	// is useful in the Xbox full-screen experience / Game Bar, where you can focus the
+	// widget and press A to pause from the Game Bar UI. Create that event so the widget
+	// can toggle pausing.
 	if (gConfig.WidgetPause)
 	{
 		gPauseSignalEvent = CreatePauseSignalEvent();
@@ -224,15 +221,8 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 		if (runningServer && serve_request(gIsPaused))
 			HandlePauseKeyPress();
 
-		// Poll the Xbox controller(s) for the pause combo (Back + Start + LT + RT).
-		if (gConfig.ControllerPause && PollGamepadForPauseCombo())
-		{
-			HandlePauseKeyPress();
-		}
-
-		// The Game Bar widget signals this event when its pause button is pressed.
-		// This keeps pause/un-pause working even in the Xbox full-screen experience,
-		// where XInput polling above no longer sees controller input.
+		// The Game Bar widget signals this event when its pause button is pressed, so
+		// pause/un-pause works from the Game Bar UI even in the Xbox full-screen experience.
 		if (gPauseSignalEvent != NULL && WaitForSingleObject(gPauseSignalEvent, 0) == WAIT_OBJECT_0)
 		{
 			DbgPrint(L"Pause signal received from Game Bar widget.");
@@ -489,41 +479,6 @@ void HandleSystemResume(void)
 		UnpausePreviouslyPausedProcess();
 		gPausedBySleep = FALSE;
 	}
-}
-
-// Polls all connected Xbox controllers for the pause combo: Back + Start + LT + RT
-// held simultaneously. Uses edge detection so it fires only once per press (on the
-// transition from "not held" to "held"), not continuously while the buttons are down.
-// Returns TRUE exactly once each time the combo becomes newly pressed.
-BOOL PollGamepadForPauseCombo(void)
-{
-	static BOOL WasPressed = FALSE;
-	BOOL IsPressedNow = FALSE;
-
-	for (u32 i = 0; i < XUSER_MAX_COUNT; i++)
-	{
-		XINPUT_STATE State = { 0 };
-		if (XInputGetState(i, &State) == ERROR_SUCCESS)
-		{
-			WORD Buttons = State.Gamepad.wButtons;
-			BOOL BackAndStart = (Buttons & XINPUT_GAMEPAD_BACK) && (Buttons & XINPUT_GAMEPAD_START);
-			BOOL BothTriggers = (State.Gamepad.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD) &&
-			                    (State.Gamepad.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
-			if (BackAndStart && BothTriggers)
-			{
-				IsPressedNow = TRUE;
-				break;
-			}
-		}
-	}
-
-	BOOL JustPressed = (IsPressedNow && !WasPressed);
-	if (JustPressed)
-	{
-		DbgPrint(L"Controller pause combo (Back+Start+LT+RT) detected.");
-	}
-	WasPressed = IsPressedNow;
-	return(JustPressed);
 }
 
 // Creates the named event that lets the Xbox Game Bar widget toggle the pause state.
@@ -902,14 +857,6 @@ u32 LoadRegistrySettings(void)
 			.MinValue = &(u32) { 0 },
 			.MaxValue = &(u32) { 1 },
 			.Destination = &gConfig.PauseOnSleep
-		},
-		{
-			.Name = L"ControllerPause",
-			.DataType = REG_DWORD,
-			.DefaultValue = &(u32) { 1 },
-			.MinValue = &(u32) { 0 },
-			.MaxValue = &(u32) { 1 },
-			.Destination = &gConfig.ControllerPause
 		},
 		{
 			.Name = L"WidgetPause",

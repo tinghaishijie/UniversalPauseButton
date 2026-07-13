@@ -14,7 +14,7 @@ A tiny Windows tray app: it suspends the foreground window's process (or a named
 2. Focus your game and press **Pause/Break** to freeze it; press again to un-freeze.
 3. Click the tray icon to quit.
 
-Other ways to toggle pause: a custom hotkey, an Xbox controller combo (**Back + Start + LT + RT**), automatically on sleep/wake, from a phone via the built-in web server, or via the Xbox Game Bar widget.
+Other ways to toggle pause: a custom hotkey, automatically on sleep/wake, from a phone via the built-in web server, or via the Xbox Game Bar widget.
 
 > ⚠️ Best for **single-player** games. Pausing a multiplayer game will get you kicked. Since suspending a process is something only debuggers normally do, results vary by app — test before relying on it.
 
@@ -31,7 +31,6 @@ All values live under `HKCU\Software\UniversalPauseButton`. Out-of-range values 
 | `ProcessNameToPause` | String | `""` | — | Always pause this process by name (e.g. `game.exe`), ignoring the foreground window. First match only. |
 | `WebPort` | DWORD | `0` | 0–65535 | If non-zero, start a small web server on this port so a phone/browser can toggle pause. `0` = disabled. |
 | `PauseOnSleep` | DWORD | `1` | 0–1 | Auto-pause when the PC sleeps and auto-resume on wake. |
-| `ControllerPause` | DWORD | `1` | 0–1 | Toggle pause with the Xbox controller combo Back + Start + LT + RT. |
 | `WidgetPause` | DWORD | `1` | 0–1 | Create the shared event (`Global\UniversalPauseButtonToggle`) the Game Bar widget uses. |
 | `Autostart` | DWORD | `0` | 0–1 | Register in the per-user Run key to launch at sign-in. |
 
@@ -41,9 +40,7 @@ Notes: if `ProcessNameToPause` is set, that named process is paused (never `svch
 
 ## Xbox full-screen experience / Game Bar widget
 
-The controller combo works on the desktop but **stops while the Xbox full-screen experience (FSE) or Game Bar is in front** — that shell takes exclusive control of the controller. The keyboard hotkey still works (it's a system-level global hotkey).
-
-To pause/resume in FSE, use the **Game Bar widget** in the [`GameBarWidget`](GameBarWidget) folder: it adds a Pause/Resume button to the Xbox Game Bar and signals the main app through the shared event, so the main app must be running. See [`GameBarWidget/README.md`](GameBarWidget/README.md) to build and sideload it.
+The keyboard hotkey keeps working in the Xbox full-screen experience (FSE) because it's a system-level global hotkey. If you play with a controller, use the **Game Bar widget** in the [`GameBarWidget`](GameBarWidget) folder: it adds a Pause/Resume button to the Xbox Game Bar that you can focus and press A on (Game Bar stays controller-navigable in FSE). It signals the main app through the shared event, so the main app must be running. See [`GameBarWidget/README.md`](GameBarWidget/README.md) to build and sideload it.
 
 ---
 
@@ -59,7 +56,7 @@ To pause/resume in FSE, use the **Game Bar widget** in the [`GameBarWidget`](Gam
 2. 切到游戏窗口，按 **Pause/Break** 冻结它；再按一次解冻。
 3. 点击托盘图标可退出。
 
-其他触发方式：自定义热键、Xbox 手柄组合键（**Back + Start + LT + RT**）、睡眠/唤醒时自动暂停、通过内置 Web 服务用手机控制、或使用 Xbox Game Bar 小组件。
+其他触发方式：自定义热键、睡眠/唤醒时自动暂停、通过内置 Web 服务用手机控制、或使用 Xbox Game Bar 小组件。
 
 > ⚠️ 仅适合**单人游戏**。暂停多人游戏会被踢出房间。挂起进程通常只有调试器才会做，效果因程序而异，请先测试再依赖。
 
@@ -76,7 +73,6 @@ To pause/resume in FSE, use the **Game Bar widget** in the [`GameBarWidget`](Gam
 | `ProcessNameToPause` | 字符串 | `""` | — | 始终按名字暂停该进程（如 `game.exe`），忽略前台窗口；只匹配第一个。 |
 | `WebPort` | DWORD | `0` | 0–65535 | 非 0 时在该端口启动小型 Web 服务，供手机/浏览器切换暂停；`0` 为禁用。 |
 | `PauseOnSleep` | DWORD | `1` | 0–1 | 睡眠时自动暂停、唤醒时自动恢复。 |
-| `ControllerPause` | DWORD | `1` | 0–1 | 用手柄组合键 Back + Start + LT + RT 切换暂停。 |
 | `WidgetPause` | DWORD | `1` | 0–1 | 创建 Game Bar 小组件所用的共享事件（`Global\UniversalPauseButtonToggle`）。 |
 | `Autostart` | DWORD | `0` | 0–1 | 写入当前用户的 Run 键，登录时自动启动。 |
 
@@ -84,9 +80,7 @@ To pause/resume in FSE, use the **Game Bar widget** in the [`GameBarWidget`](Gam
 
 ## Xbox 全屏体验 / Game Bar 小组件
 
-手柄组合键在桌面可用，但**当 Xbox 全屏体验（FSE）或 Game Bar 处于前台时会失效**——该 shell 独占了手柄输入。键盘热键仍然有效（它是系统级全局热键）。
-
-要在 FSE 下暂停/恢复，请使用 [`GameBarWidget`](GameBarWidget) 文件夹中的 **Game Bar 小组件**：它在 Xbox Game Bar 中加一个"暂停/恢复"按钮，并通过共享事件通知主程序，因此主程序必须处于运行状态。构建与旁加载方法见 [`GameBarWidget/README.md`](GameBarWidget/README.md)。
+键盘热键在 Xbox 全屏体验（FSE）下仍然有效（它是系统级全局热键）。如果你用手柄游玩，请使用 [`GameBarWidget`](GameBarWidget) 文件夹中的 **Game Bar 小组件**：它在 Xbox Game Bar 中加一个"暂停/恢复"按钮，可用手柄聚焦并按 A 触发（Game Bar 在 FSE 下仍支持手柄导航）。它通过共享事件通知主程序，因此主程序必须处于运行状态。构建与旁加载方法见 [`GameBarWidget/README.md`](GameBarWidget/README.md)。
 
 ---
 

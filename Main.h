@@ -58,7 +58,6 @@ typedef struct _CONFIG
 	wchar_t ProcessNameToPause[128];
 	u32 WebPort;
 	u32 PauseOnSleep;
-	u32 ControllerPause;
 	u32 WidgetPause;
 	u32 Autostart;
 } CONFIG;
@@ -75,7 +74,6 @@ BOOL IsGameBarProcessId(u32 ProcessId);
 void PauseProcessById(u32 ProcessId);
 void HandleSystemSuspend(void);
 void HandleSystemResume(void);
-BOOL PollGamepadForPauseCombo(void);
 HANDLE CreatePauseSignalEvent(void);
 void RegisterWidgetLaunchProtocol(void);
 void UpdateAutostartRegistration(void);
