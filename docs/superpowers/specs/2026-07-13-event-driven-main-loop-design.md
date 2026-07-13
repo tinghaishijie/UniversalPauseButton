@@ -1,7 +1,7 @@
 # Event-driven main loop — design
 
 - **Date:** 2026-07-13
-- **Status:** Approved design, not yet implemented
+- **Status:** Implemented (`Main.c`); adds initial-foreground seeding beyond the original design
 - **Scope:** `Main.c` `wWinMain` message loop and foreground tracking
 - **Author note:** To be implemented on a Windows machine with a Visual Studio build; the design was written on macOS where it cannot be compiled or tested.
 
@@ -81,6 +81,8 @@ void CALLBACK ForegroundChangeProc(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
 ```
 
 `WINEVENT_OUTOFCONTEXT` means the callback runs on our thread while it pumps messages — no injected DLL, no separate thread. `WINEVENT_SKIPOWNPROCESS` drops events for our own process. Call `UnhookWinEvent(gForegroundHook)` in the `Exit:` cleanup.
+
+**Initial seeding (added during implementation):** the hook only fires on foreground *changes*, so immediately after installing it, do one `GetForegroundWindow()` to seed `gLastForegroundProcessId`. Without this, a game that is already in the foreground when the app starts — followed by a sleep with no window switch — would leave `gLastForegroundProcessId == 0` and nothing would be auto-paused. This preserves the old per-iteration poll's behavior on the very first tick.
 
 The per-iteration `GetForegroundWindow` block (current lines ~197–219) is deleted entirely.
 

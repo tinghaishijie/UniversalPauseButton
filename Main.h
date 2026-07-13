@@ -80,3 +80,4 @@ void UpdateWidgetState(void);
 void RepublishWidgetStateIfMissing(void);
 void DeleteWidgetStateFile(void);
 void GetProcessNameById(u32 ProcessId, wchar_t* Buffer, size_t BufferCount);
+void CALLBACK ForegroundChangeProc(HWINEVENTHOOK Hook, DWORD Event, HWND Window, LONG IdObject, LONG IdChild, DWORD IdEventThread, DWORD EventTime);
