@@ -4,14 +4,14 @@
 
 <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/ryanries/UniversalPauseButton/total">
 
-Pause **any** game or app — even during those "un-pausable" cutscenes — by pressing the **Pause/Break** key. Press again to resume.
+Pause **any** game or app — even during those "un-pausable" cutscenes — by pressing **Ctrl+Shift+P**. Press again to resume.
 
 A tiny Windows tray app: it suspends the foreground window's process (or a named process) using `NtSuspendProcess`, and resumes it later. Originally written in 2015 and rewritten in 2023.
 
 ## Usage
 
 1. Run `UniversalPauseButton.exe`. It lives in the system tray (pause-button icon).
-2. Focus your game and press **Pause/Break** to freeze it; press again to un-freeze.
+2. Focus your game and press **Ctrl+Shift+P** to freeze it; press again to un-freeze.
 3. Click the tray icon to quit.
 
 Other ways to toggle pause: a custom hotkey, automatically on sleep/wake, or via the Xbox Game Bar widget.
@@ -26,8 +26,8 @@ All values live under `HKCU\Software\UniversalPauseButton`. Out-of-range values 
 | --- | --- | --- | --- | --- |
 | `Debug` | DWORD | `0` | 0–1 | Spawn a console showing internal debug messages. |
 | `TrayIcon` | DWORD | `1` | 0–1 | Show the tray icon. `0` runs fully invisibly (for shells with no tray). |
-| `PauseKey` | DWORD | `0x13` | 0x1–0xFE | [Virtual-key code](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes) of the hotkey (default = Pause/Break). |
-| `PauseKeyModifiers` | DWORD | `0` | 0–0xF | Modifier bitmask: ALT=1, CTRL=2, SHIFT=4, WIN=8 (combine as needed). |
+| `PauseKey` | DWORD | `0x50` | 0x1–0xFE | [Virtual-key code](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes) of the hotkey (default = `P`). |
+| `PauseKeyModifiers` | DWORD | `0x6` | 0–0xF | Modifier bitmask: ALT=1, CTRL=2, SHIFT=4, WIN=8 (combine as needed). Default = CTRL+SHIFT. |
 | `ProcessNameToPause` | String | `""` | — | Always pause this process by name (e.g. `game.exe`), ignoring the foreground window. First match only. |
 | `PauseOnSleep` | DWORD | `1` | 0–1 | Auto-pause when the PC sleeps and auto-resume on wake. |
 | `WidgetPause` | DWORD | `1` | 0–1 | Create the shared event (`Global\UniversalPauseButtonToggle`) the Game Bar widget uses. |
@@ -45,14 +45,14 @@ The keyboard hotkey keeps working in the Xbox full-screen experience (FSE) becau
 
 # 中文使用说明
 
-一键暂停**任意**游戏或程序——即便是那些无法暂停的过场动画。按下 **Pause/Break** 键暂停，再按一次恢复。
+一键暂停**任意**游戏或程序——即便是那些无法暂停的过场动画。按下 **Ctrl+Shift+P** 暂停，再按一次恢复。
 
 这是一个极小的 Windows 托盘程序：用 `NtSuspendProcess` 挂起当前前台窗口对应的进程（或指定名字的进程），之后再恢复。最初写于 2015 年，2023 年重写。
 
 ## 使用方法
 
 1. 运行 `UniversalPauseButton.exe`，程序常驻系统托盘（暂停按钮图标）。
-2. 切到游戏窗口，按 **Pause/Break** 冻结它；再按一次解冻。
+2. 切到游戏窗口，按 **Ctrl+Shift+P** 冻结它；再按一次解冻。
 3. 点击托盘图标可退出。
 
 其他触发方式：自定义热键、睡眠/唤醒时自动暂停、或使用 Xbox Game Bar 小组件。
@@ -67,8 +67,8 @@ The keyboard hotkey keeps working in the Xbox full-screen experience (FSE) becau
 | --- | --- | --- | --- | --- |
 | `Debug` | DWORD | `0` | 0–1 | 弹出控制台显示内部调试信息。 |
 | `TrayIcon` | DWORD | `1` | 0–1 | 是否显示托盘图标；`0` 表示完全隐藏运行（适合无托盘的 shell）。 |
-| `PauseKey` | DWORD | `0x13` | 0x1–0xFE | 热键的[虚拟键码](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes)（默认为 Pause/Break）。 |
-| `PauseKeyModifiers` | DWORD | `0` | 0–0xF | 修饰键位掩码：ALT=1、CTRL=2、SHIFT=4、WIN=8（可组合相加）。 |
+| `PauseKey` | DWORD | `0x50` | 0x1–0xFE | 热键的[虚拟键码](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes)（默认为 `P`）。 |
+| `PauseKeyModifiers` | DWORD | `0x6` | 0–0xF | 修饰键位掩码：ALT=1、CTRL=2、SHIFT=4、WIN=8（可组合相加）。默认为 CTRL+SHIFT。 |
 | `ProcessNameToPause` | 字符串 | `""` | — | 始终按名字暂停该进程（如 `game.exe`），忽略前台窗口；只匹配第一个。 |
 | `PauseOnSleep` | DWORD | `1` | 0–1 | 睡眠时自动暂停、唤醒时自动恢复。 |
 | `WidgetPause` | DWORD | `1` | 0–1 | 创建 Game Bar 小组件所用的共享事件（`Global\UniversalPauseButtonToggle`）。 |
