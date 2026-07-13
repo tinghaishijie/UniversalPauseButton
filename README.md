@@ -87,7 +87,3 @@ The keyboard hotkey keeps working in the Xbox full-screen experience (FSE) becau
 ## Xbox 全屏体验 / Game Bar 小组件
 
 键盘热键在 Xbox 全屏体验（FSE）下仍然有效（它是系统级全局热键）。如果你用手柄游玩，请使用 [`GameBarWidget`](GameBarWidget) 文件夹中的 **Game Bar 小组件**：它在 Xbox Game Bar 中加一个"暂停/恢复"按钮，可用手柄聚焦并按 A 触发（Game Bar 在 FSE 下仍支持手柄导航）。它通过共享事件通知主程序，因此主程序必须处于运行状态。构建与旁加载方法见 [`GameBarWidget/README.md`](GameBarWidget/README.md)。
-
----
-
-Joseph Ryan Ries, 2015–2023 · ryanries09@gmail.com · [GitHub](https://github.com/ryanries/UniversalPauseButton/)
