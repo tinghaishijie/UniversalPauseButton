@@ -13,6 +13,11 @@
 
 #define WM_TRAYICON (WM_USER + 1)
 #define IDT_CURSOR_IDLE_TIMER 2001
+// Posted by the low-level mouse hook to ask the main thread to restore the cursor.
+// The restore itself (SPI_SETCURSORS broadcast) is too slow to run inside a
+// WH_MOUSE_LL callback without risking the low-level-hook timeout, which would
+// make the hook miss later moves and leave the pointer stuck hidden.
+#define WM_APP_SHOW_CURSOR (WM_APP + 1)
 
 #define OEMRESOURCE   // Required for the OCR_* system cursor id constants.
 
@@ -45,6 +50,8 @@ wchar_t gPausedProcessName[128];
 HHOOK gMouseHook = NULL;
 HCURSOR gBlankCursor = NULL;
 BOOL gIsCursorHidden = FALSE;
+HWND gMainWindow = NULL;           // Target for the mouse hook's deferred show-cursor post.
+BOOL gShowCursorPending = FALSE;   // A WM_APP_SHOW_CURSOR is already queued; don't flood.
 u32 gLastRealMoveTick = 0;
 POINT gLastMousePos = { 0 };
 BOOL gHaveLastMousePos = FALSE;
@@ -140,6 +147,8 @@ int WINAPI wWinMain(_In_ HINSTANCE Instance, _In_opt_ HINSTANCE PrevInstance, _I
 			MsgBox(L"Failed to create window! Error 0x%08lx", APPNAME L" Error", MB_OK | MB_ICONERROR, GetLastError());
 			goto Exit;
 		}
+
+		gMainWindow = HWnd;
 
 		if (gConfig.TrayIcon)
 		{
@@ -437,9 +446,15 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int Code, _In_ WPARAM WParam, _In_ LPARA
 		if (Activity)
 		{
 			gLastRealMoveTick = GetTickCount();
-			if (gIsCursorHidden)
+			if (gIsCursorHidden && !gShowCursorPending && gMainWindow != NULL)
 			{
-				ShowCursorNow();
+				// Defer the actual restore to the main message loop. Doing the slow
+				// SPI_SETCURSORS broadcast here could blow the low-level-hook timeout
+				// and make Windows drop later moves, stranding the cursor hidden.
+				if (PostMessageW(gMainWindow, WM_APP_SHOW_CURSOR, 0, 0))
+				{
+					gShowCursorPending = TRUE;
+				}
 			}
 		}
 	}
@@ -529,6 +544,7 @@ void ShowCursorNow(void)
 
 	SystemParametersInfoW(SPI_SETCURSORS, 0, NULL, SPIF_SENDCHANGE);
 	gIsCursorHidden = FALSE;
+	gShowCursorPending = FALSE;
 	DbgPrint(L"Cursor shown (real movement).");
 }
 
@@ -1362,6 +1378,17 @@ LRESULT CALLBACK SysTrayCallback(_In_ HWND Window, _In_ UINT Message, _In_ WPARA
 
 	switch (Message)
 	{
+		case WM_APP_SHOW_CURSOR:
+		{
+			// Deferred from the low-level mouse hook: real movement was detected, so
+			// restore the pointer here on the normal message-pump path.
+			gShowCursorPending = FALSE;
+			if (gConfig.HideIdleCursor)
+			{
+				ShowCursorNow();
+			}
+			break;
+		}
 		case WM_TIMER:
 		{
 			if (WParam == IDT_CURSOR_IDLE_TIMER && gConfig.HideIdleCursor)
